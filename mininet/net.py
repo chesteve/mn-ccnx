@@ -178,16 +178,16 @@ class Mininet( object ):
            returns: added host"""
         # Default IP and MAC addresses
 	#pdb.set_trace()
-        #defaults = { 'ip': ipAdd( self.nextIP,
-                                  #ipBaseNum=self.ipBaseNum,
-                                  #prefixLen=self.prefixLen ) +
-                                  #'/%s' % self.prefixLen }
-        #if self.autoSetMacs:
-            #defaults[ 'mac'] = macColonHex( self.nextIP )
-        #if self.autoPinCpus:
-            #defaults[ 'cores' ] = self.nextCore
-            #self.nextCore = ( self.nextCore + 1 ) % self.numCores        
-        #self.nextIP += 1
+        defaults = { 'ip': ipAdd( self.nextIP,
+                                  ipBaseNum=self.ipBaseNum,
+                                  prefixLen=self.prefixLen ) +
+                                  '/%s' % self.prefixLen }
+        if self.autoSetMacs:
+            defaults[ 'mac'] = macColonHex( self.nextIP )
+        if self.autoPinCpus:
+            defaults[ 'cores' ] = self.nextCore
+            self.nextCore = ( self.nextCore + 1 ) % self.numCores        
+        self.nextIP += 1
 	defaults = {}
         defaults.update( params )
 
@@ -289,14 +289,14 @@ class Mininet( object ):
 
         info( '*** Creating network\n' )
 
-        #if not self.controllers:
+        if not self.controllers:
             # Add a default controller
-            #info( '*** Adding controller\n' )
-            #classes = self.controller
-            #if type( classes ) is not list:
-            #    classes = [ classes ]
-            #for i, cls in enumerate( classes ):
-            #    self.addController( 'c%d' % i, cls )
+            info( '*** Adding controller\n' )
+            classes = self.controller
+            if type( classes ) is not list:
+                classes = [ classes ]
+            for i, cls in enumerate( classes ):
+                self.addController( 'c%d' % i, cls )
 
         info( '*** Adding hosts:\n' )
         for hostName in topo.hosts():
@@ -323,7 +323,6 @@ class Mininet( object ):
             info( '(%s, %s) ' % ( src.name, dst.name ) )
 
         info( '\n' )
-        
         
     def configureControlNetwork( self ):
         "Control net config hook: override in subclass"

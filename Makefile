@@ -37,9 +37,7 @@ test: $(MININET) $(TEST)
 mnexec: mnexec.c $(MN) mininet/net.py
 	cc $(CFLAGS) $(LDFLAGS) -DVERSION=\"`PYTHONPATH=. $(MN) --version`\" $< -o $@
 
-install: $(MNEXEC) $(MANPAGES)
-	install $(MNEXEC) $(BINDIR)
-	install $(MANPAGES) $(MANDIR)
+install:
 	python setup.py install
 
 develop: $(MNEXEC) $(MANPAGES)

@@ -121,15 +121,16 @@ function kernel_clean {
 
 # Install Mininet deps
 function mn_deps {
-    echo "Installing Mininet dependencies"
-    $install gcc make screen psmisc xterm ssh iperf iproute telnet \
-        python-setuptools python-networkx cgroup-bin ethtool help2man \
-        pyflakes pylint pep8
-
-    if [ "$DIST" = "Ubuntu" ] && [ "$RELEASE" = "10.04" ]; then
-        echo "Upgrading networkx to avoid deprecation warning"
-        sudo easy_install --upgrade networkx
-    fi
+    #echo "Installing Mininet dependencies"
+    #if [ "$DIST" = "Fedora" ]; then
+        #$install gcc make socat psmisc xterm openssh-clients iperf \
+            #iproute telnet python-setuptools libcgroup-tools \
+            #ethtool help2man pyflakes pylint python-pep8
+    #else
+        #$install gcc make socat psmisc xterm ssh iperf iproute telnet \
+            #python-setuptools cgroup-bin ethtool help2man \
+            #pyflakes pylint pep8
+    #fi
 
     # Add sysctl parameters as noted in the INSTALL file to increase kernel
     # limits to support larger setups:
@@ -138,8 +139,15 @@ function mn_deps {
     # Load new sysctl settings:
     sudo sysctl -p
 
-    echo "Installing Mininet/Mini-CCNx core"
+    echo "***Installing Mininet core***"
+    git clone https://github.com/mininet/mininet
+    sudo ./mininet/util/install.sh -$@
+
+    echo "***Installing MiniCCNx core***"
     pushd ~/mn-ccnx
+    NEWVER="$(sed -n '/VERSION/p' ~/mininet/mininet/net.py)"
+    echo "${NEWVER}"
+    sed  -ir "s/^VERSION.*/$NEWVER/g" ./mininet/net.py
     sudo make install
     popd
 }
