@@ -6,7 +6,7 @@ from mininet.log import setLogLevel, output, info
 from mininet.cli import CLI
 from mininet.node import CPULimitedCCNHost, CCNHost
 from mininet.link import TCLink
-from mininet.conf_parser import parse_hosts,parse_routers, parse_links
+from mininet.conf_parser import *
 import os.path, time
 import optparse
 import datetime
@@ -45,8 +45,9 @@ class CCNTopo(Topo):
 
         hosts_conf = parse_hosts(conf_arq)
        	routers_conf = parse_routers(conf_arq)
+        switches_conf = parse_switches(conf_arq)
+        controllers_conf = parse_controllers(conf_arq)
         links_conf = parse_links(conf_arq)
-
 
         self.isTCLink = False
         self.isLimited = False
