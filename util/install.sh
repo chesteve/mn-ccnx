@@ -139,15 +139,15 @@ function mn_deps {
     # Load new sysctl settings:
     sudo sysctl -p
 
-    echo "***Installing Mininet core***"
-    git clone https://github.com/mininet/mininet
-    sudo ./mininet/util/install.sh -$@
+    #echo "***Installing Mininet core***"
+    #git clone https://github.com/mininet/mininet
+    #sudo ./mininet/util/install.sh -$@
 
     echo "***Installing MiniCCNx core***"
     pushd ~/mn-ccnx
-    NEWVER="$(sed -n '/VERSION/p' ~/mininet/mininet/net.py)"
-    echo "${NEWVER}"
-    sed  -ir "s/^VERSION.*/$NEWVER/g" ./mininet/net.py
+    #NEWVER="$(sed -n '/VERSION/p' ~/mininet/mininet/net.py)"
+    #echo "${NEWVER}"
+    #sed  -ir "s/^VERSION.*/$NEWVER/g" ./mininet/net.py
     sudo make install
     popd
 }

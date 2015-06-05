@@ -99,6 +99,8 @@ from mininet.link import Link, Intf
 from mininet.util import quietRun, fixLimits, numCores, ensureRoot
 from mininet.util import macColonHex, ipStr, ipParse, netParse, ipAdd, nextCCNnet
 from mininet.term import cleanUpScreens, makeTerms
+
+from sources.metrics import MetricsCollector
 import pdb
 
 # Mininet version: should be consistent with README and LICENSE
@@ -112,7 +114,7 @@ class Mininet( object ):
                   build=True, xterms=False, cleanup=False, ipBase='10.0.0.0/8',
                   inNamespace=False,
                   autoSetMacs=False, autoStaticArp=False, autoPinCpus=False,
-                  listenPort=None ):
+                  listenPort=None, preferences=None):
         """Create Mininet object.
            topo: Topo (topology) object or None
            switch: default Switch class
@@ -153,6 +155,11 @@ class Mininet( object ):
         self.hosts = []
         self.switches = []
         self.controllers = []
+        #pdb.set_trace()
+        self.collectors = []
+        self.getMetrics = preferences['getMetrics']
+        self.metricsTimer = preferences['metricsTimer']
+        self.dbPrefs = preferences['dbPrefs']
 
         self.nameToNode = {}  # name to Node (Host/Switch) objects
 
@@ -188,11 +195,12 @@ class Mininet( object ):
             defaults[ 'cores' ] = self.nextCore
             self.nextCore = ( self.nextCore + 1 ) % self.numCores        
         self.nextIP += 1
-	defaults = {}
+        defaults = {}
         defaults.update( params )
 
         if not cls:
             cls = self.host
+        #aqui que ele cria os node!
         h = cls( name, **defaults )
         self.hosts.append( h )
         self.nameToNode[ name ] = h
@@ -289,7 +297,7 @@ class Mininet( object ):
 
         info( '*** Creating network\n' )
 
-        if not self.controllers:
+        if self.controllers:
             # Add a default controller
             info( '*** Adding controller\n' )
             classes = self.controller
@@ -300,9 +308,11 @@ class Mininet( object ):
 
         info( '*** Adding hosts:\n' )
         for hostName in topo.hosts():
-	    #pdb.set_trace()
+            #aqui ele adiciona os hosts mesmo. Funcao self.addHost retorna o host adicionado! So precisa entao pegar esse host, passar pra classe MetricsCollector e ja era. Ou se preferir, tem uma lista com todos os hosts self.hosts.
             self.addHost( hostName, **topo.nodeInfo( hostName ) )
             info( hostName + ' ' )
+        #info( hostName + '\n' )
+        #pdb.set_trace()
 
         info( '\n*** Adding switches:\n' )
         for switchName in topo.switches():
@@ -331,13 +341,20 @@ class Mininet( object ):
 
     def build( self ):
         "Build mininet."
-
+        #pdb.set_trace()
         if self.topo:
             self.buildFromTopo( self.topo )
         if ( self.inNamespace ):
             self.configureControlNetwork()
         info( '*** Configuring hosts\n' )
         self.configHosts()
+
+
+        if(self.getMetrics == 1):
+            info( '*** Adding metrics collectors:\n' )
+            for host in self.hosts:
+                collector=MetricsCollector(host, self.metricsTimer, self.dbPrefs)
+                self.collectors.append(collector)
         if self.xterms:
             self.startTerms()
         if self.autoStaticArp:
@@ -369,9 +386,9 @@ class Mininet( object ):
         "Start controller and switches."
         if not self.built:
             self.build()
-        info( '*** Starting controller\n' )
-        for controller in self.controllers:
-            controller.start()
+        #info( '*** Starting controller\n' )
+        #for controller in self.controllers:
+        #    controller.start()
         info( '*** Starting %s switches\n' % len( self.switches ) )
         for switch in self.switches:
             info( switch.name + ' ')
@@ -397,7 +414,14 @@ class Mininet( object ):
         for controller in self.controllers:
             info( controller.name + ' ' )
             controller.stop()
+        info( '\n' )
+        info( '*** Stopping %i collectors\n' % len( self.collectors ) )
+        for collector in self.collectors:
+            collector.stop()
         info( '\n*** Done\n' )
+
+
+        
 
     def run( self, test, *args, **kwargs ):
         "Perform a complete start/test/stop cycle."

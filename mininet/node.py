@@ -55,6 +55,8 @@ from mininet.util import ( quietRun, errRun, errFail, moveIntf, isShellBuiltin,
                            numCores, retry, mountCgroups, run )
 from mininet.moduledeps import moduleDeps, pathCheck, OVS_KMOD, OF_KMOD, TUN
 from mininet.link import Link, Intf, TCIntf
+
+from sources.metrics import MetricsCollector
 import pdb
 
 class Node( object ):
@@ -722,15 +724,13 @@ class CCNHost( Host ):
 
     def __init__( self, name, **kwargs ):
 
-
         Host.__init__( self, name, **kwargs )
         if not CCNHost.inited:
             CCNHost.init()
 
         self.cmd("export CCND_DEBUG=6")
         self.cmd("export CCND_LOG=./log.{0}".format(self.name))
-	#pdb.set_trace()
-#	print self.params['cache']
+
 	if self.params['cache'] != None:
 		self.cmd("export CCND_CAP={0}".format(self.params['cache']))
 

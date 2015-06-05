@@ -43,14 +43,16 @@ from mininet.util import ipStr, netParse, ipAdd, quietRun
 from mininet.util import buildTopo
 from mininet.util import custom, customConstructor
 from mininet.term import makeTerm, cleanUpScreens
-from mininet.node import Controller, RemoteController, NOX, OVSController
+from mininet.node import Controller, RemoteController, NOX, OVSController, CPULimitedCCNHost, CCNHost
 from mininet.node import CPULimitedHost, Host, Node
 from mininet.node import OVSKernelSwitch, OVSSwitch, UserSwitch
 from mininet.link import TCLink, Intf, Link
 from mininet.cli import CLI
 from mininet.moduledeps import moduleDeps, pathCheck
-from mininet.topo import SingleSwitchTopo, LinearTopo, SingleSwitchReversedTopo
+from mininet.topo import SingleSwitchTopo, LinearTopo, SingleSwitchReversedTopo, Topo
 from mininet.topolib import TreeTopo
+from sources.metrics import MetricsCollector
+from sources.miniccnx import CCNTopo, execute
 
 print 'MiniCCNxEdit running...' #+VERSION
 MININET_VERSION = re.sub(r'[^\d\.]', '', VERSION)
@@ -84,6 +86,301 @@ class LegacyRouter( Node ):
         self.cmd('sysctl -w net.ipv4.ip_forward=1')
         return r
 
+class PrefsDialog(tkSimpleDialog.Dialog):
+    "Preferences dialog"
+
+    def __init__(self, parent, title, prefDefaults):
+
+        self.prefValues = prefDefaults
+
+        tkSimpleDialog.Dialog.__init__(self, parent, title)
+
+    def body(self, master):
+        "Create dialog body"
+        self.rootFrame = master
+        self.leftfieldFrame = Frame(self.rootFrame, padx=5, pady=5)
+        self.leftfieldFrame.grid(row=0, column=0, sticky='nswe', columnspan=2)
+        self.rightfieldFrame = Frame(self.rootFrame, padx=5, pady=5)
+        self.rightfieldFrame.grid(row=0, column=2, sticky='nswe', columnspan=2)
+
+        # Field for Base IP
+        Label(self.leftfieldFrame, text="IP Base:").grid(row=0, sticky=E)
+        self.ipEntry = Entry(self.leftfieldFrame)
+        self.ipEntry.grid(row=0, column=1)
+        ipBase =  self.prefValues['ipBase']
+        self.ipEntry.insert(0, ipBase)
+
+        # Selection of terminal type
+        Label(self.leftfieldFrame, text="Default Terminal:").grid(row=1, sticky=E)
+        self.terminalVar = StringVar(self.leftfieldFrame)
+        self.terminalOption = OptionMenu(self.leftfieldFrame, self.terminalVar, "xterm", "gterm")
+        self.terminalOption.grid(row=1, column=1, sticky=W)
+        terminalType = self.prefValues['terminalType']
+        self.terminalVar.set(terminalType)
+
+        # Field for CLI
+        Label(self.leftfieldFrame, text="Start CLI:").grid(row=2, sticky=E)
+        self.cliStart = IntVar()
+        self.cliButton = Checkbutton(self.leftfieldFrame, variable=self.cliStart)
+        self.cliButton.grid(row=2, column=1, sticky=W)
+        if self.prefValues['startCLI'] == '0':
+            self.cliButton.deselect()
+        else:
+            self.cliButton.select()
+
+        # Metrics collection parameters
+        metricsFrame=LabelFrame(self.leftfieldFrame, text="Metrics:", padx=5, pady=5)
+        metricsFrame.grid(row=3, column=0, columnspan=2, sticky=EW)
+        Label(metricsFrame, text="Collect Metrics:").grid(row=0, sticky=E)
+        self.getMetrics = IntVar()
+        self.metricsButton = Checkbutton(metricsFrame, variable=self.getMetrics)
+        self.metricsButton.grid(row=0, column=1, sticky=W)
+        if self.prefValues['getMetrics'] == '0':
+            self.metricsButton.deselect()
+        else:
+            self.metricsButton.select()
+
+        metricsTimer = self.prefValues['metricsTimer']
+        Label(metricsFrame, text="Time interval [seconds]:").grid(row=1, sticky=E)
+        self.metricsTimer = Entry(metricsFrame)
+        self.metricsTimer.grid(row=1, column=1)
+        self.metricsTimer.insert(1, metricsTimer)
+
+        dbHost = self.prefValues['dbPrefs']['dbHost']
+        Label(metricsFrame, text="Database Host:").grid(row=2, sticky=E)
+        self.dbHost = Entry(metricsFrame)
+        self.dbHost.grid(row=2, column=1)
+        self.dbHost.insert(2, dbHost)
+
+        dbPort = self.prefValues['dbPrefs']['dbPort']
+        Label(metricsFrame, text="Database Port:").grid(row=3, sticky=E)
+        self.dbPort = Entry(metricsFrame)
+        self.dbPort.grid(row=3, column=1)
+        self.dbPort.insert(3, dbPort)
+
+        dbName = self.prefValues['dbPrefs']['dbName']
+        Label(metricsFrame, text="Database Name:").grid(row=4, sticky=E)
+        self.dbName = Entry(metricsFrame)
+        self.dbName.grid(row=4, column=1)
+        self.dbName.insert(4, dbName)
+
+        dbUser = self.prefValues['dbPrefs']['dbUser']
+        Label(metricsFrame, text="Database User:").grid(row=5, sticky=E)
+        self.dbUser = Entry(metricsFrame)
+        self.dbUser.grid(row=5, column=1)
+        self.dbUser.insert(5, dbUser)
+
+        dbPass = self.prefValues['dbPrefs']['dbPass']
+        Label(metricsFrame, text="Database Password:").grid(row=6, sticky=E)
+        self.dbPass = Entry(metricsFrame)
+        self.dbPass.grid(row=6, column=1)
+        self.dbPass.insert(6, dbPass)
+
+        # Selection of switch type
+        #Label(self.leftfieldFrame, text="Default Switch:").grid(row=3, sticky=E)
+        #self.switchType = StringVar(self.leftfieldFrame)
+        #self.switchTypeMenu = OptionMenu(self.leftfieldFrame, self.switchType, "Open vSwitch Kernel Mode", "Indigo Virtual Switch", "Userspace Switch", "Userspace Switch inNamespace")
+        #self.switchTypeMenu.grid(row=3, column=1, sticky=W)
+        #switchTypePref = self.prefValues['switchType']
+        #if switchTypePref == 'ivs':
+        #    self.switchType.set("Indigo Virtual Switch")
+        #elif switchTypePref == 'userns':
+        #    self.switchType.set("Userspace Switch inNamespace")
+        #elif switchTypePref == 'user':
+        #    self.switchType.set("Userspace Switch")
+        #else:
+        #    self.switchType.set("Open vSwitch Kernel Mode")
+
+
+        # Fields for OVS OpenFlow version
+        #ovsFrame= LabelFrame(self.leftfieldFrame, text='Open vSwitch', padx=5, pady=5)
+        #ovsFrame.grid(row=4, column=0, columnspan=2, sticky=EW)
+        #Label(ovsFrame, text="OpenFlow 1.0:").grid(row=0, sticky=E)
+        #Label(ovsFrame, text="OpenFlow 1.1:").grid(row=1, sticky=E)
+        #Label(ovsFrame, text="OpenFlow 1.2:").grid(row=2, sticky=E)
+        #Label(ovsFrame, text="OpenFlow 1.3:").grid(row=3, sticky=E)
+
+        #self.ovsOf10 = IntVar()
+        #self.covsOf10 = Checkbutton(ovsFrame, variable=self.ovsOf10)
+        #self.covsOf10.grid(row=0, column=1, sticky=W)
+        #if self.prefValues['openFlowVersions']['ovsOf10'] == '0':
+        #    self.covsOf10.deselect()
+        #else:
+        #    self.covsOf10.select()
+
+        #self.ovsOf11 = IntVar()
+        #self.covsOf11 = Checkbutton(ovsFrame, variable=self.ovsOf11)
+        #self.covsOf11.grid(row=1, column=1, sticky=W)
+        #if self.prefValues['openFlowVersions']['ovsOf11'] == '0':
+        #    self.covsOf11.deselect()
+        #else:
+        #    self.covsOf11.select()
+
+        #self.ovsOf12 = IntVar()
+        #self.covsOf12 = Checkbutton(ovsFrame, variable=self.ovsOf12)
+        #self.covsOf12.grid(row=2, column=1, sticky=W)
+        #if self.prefValues['openFlowVersions']['ovsOf12'] == '0':
+        #    self.covsOf12.deselect()
+        #else:
+        #    self.covsOf12.select()
+
+        #self.ovsOf13 = IntVar()
+        #self.covsOf13 = Checkbutton(ovsFrame, variable=self.ovsOf13)
+        #self.covsOf13.grid(row=3, column=1, sticky=W)
+        #if self.prefValues['openFlowVersions']['ovsOf13'] == '0':
+        #    self.covsOf13.deselect()
+        #else:
+        #    self.covsOf13.select()
+
+        # Field for DPCTL listen port
+        Label(self.leftfieldFrame, text="dpctl port:").grid(row=5, sticky=E)
+        self.dpctlEntry = Entry(self.leftfieldFrame)
+        self.dpctlEntry.grid(row=5, column=1)
+        if 'dpctl' in self.prefValues:
+            self.dpctlEntry.insert(0, self.prefValues['dpctl'])
+
+        # sFlow
+        #sflowValues = self.prefValues['sflow']
+        #self.sflowFrame= LabelFrame(self.rightfieldFrame, text='sFlow Profile for Open vSwitch', padx=5, pady=5)
+        #self.sflowFrame.grid(row=0, column=0, columnspan=2, sticky=EW)
+
+        #Label(self.sflowFrame, text="Target:").grid(row=0, sticky=E)
+        #self.sflowTarget = Entry(self.sflowFrame)
+        #self.sflowTarget.grid(row=0, column=1)
+        #self.sflowTarget.insert(0, sflowValues['sflowTarget'])
+
+        #Label(self.sflowFrame, text="Sampling:").grid(row=1, sticky=E)
+        #self.sflowSampling = Entry(self.sflowFrame)
+        #self.sflowSampling.grid(row=1, column=1)
+        #self.sflowSampling.insert(0, sflowValues['sflowSampling'])
+
+        #Label(self.sflowFrame, text="Header:").grid(row=2, sticky=E)
+        #self.sflowHeader = Entry(self.sflowFrame)
+        #self.sflowHeader.grid(row=2, column=1)
+        #self.sflowHeader.insert(0, sflowValues['sflowHeader'])
+
+        #Label(self.sflowFrame, text="Polling:").grid(row=3, sticky=E)
+        #self.sflowPolling = Entry(self.sflowFrame)
+        #self.sflowPolling.grid(row=3, column=1)
+        #self.sflowPolling.insert(0, sflowValues['sflowPolling'])
+
+        # NetFlow
+        #nflowValues = self.prefValues['netflow']
+        #self.nFrame= LabelFrame(self.rightfieldFrame, text='NetFlow Profile for Open vSwitch', padx=5, pady=5)
+        #self.nFrame.grid(row=1, column=0, columnspan=2, sticky=EW)
+
+        #Label(self.nFrame, text="Target:").grid(row=0, sticky=E)
+        #self.nflowTarget = Entry(self.nFrame)
+        #self.nflowTarget.grid(row=0, column=1)
+        #self.nflowTarget.insert(0, nflowValues['nflowTarget'])
+
+        #Label(self.nFrame, text="Active Timeout:").grid(row=1, sticky=E)
+        #self.nflowTimeout = Entry(self.nFrame)
+        #self.nflowTimeout.grid(row=1, column=1)
+        #self.nflowTimeout.insert(0, nflowValues['nflowTimeout'])
+
+        #Label(self.nFrame, text="Add ID to Interface:").grid(row=2, sticky=E)
+        #self.nflowAddId = IntVar()
+        #self.nflowAddIdButton = Checkbutton(self.nFrame, variable=self.nflowAddId)
+        #self.nflowAddIdButton.grid(row=2, column=1, sticky=W)
+        #if nflowValues['nflowAddId'] == '0':
+        #    self.nflowAddIdButton.deselect()
+        #else:
+        #    self.nflowAddIdButton.select()
+
+        # initial focus
+        return self.ipEntry
+
+    def apply(self):
+        ipBase = self.ipEntry.get()
+        terminalType = self.terminalVar.get()
+        startCLI = str(self.cliStart.get())
+        getMetrics = str(self.getMetrics.get())
+        metricsTimer = float(self.metricsTimer.get())
+        dbName = str(self.dbName.get())
+        dbPort = int(self.dbPort.get())
+        dbHost = str(self.dbHost.get())
+        dbUser = str(self.dbUser.get())
+        dbPass = str(self.dbPass.get())
+        #sw = self.switchType.get()
+        dpctl = self.dpctlEntry.get()
+
+        #ovsOf10 = str(self.ovsOf10.get())
+        #ovsOf11 = str(self.ovsOf11.get())
+        #ovsOf12 = str(self.ovsOf12.get())
+        #ovsOf13 = str(self.ovsOf13.get())
+
+        #sflowValues = {'sflowTarget':self.sflowTarget.get(),
+        #               'sflowSampling':self.sflowSampling.get(),
+        #               'sflowHeader':self.sflowHeader.get(),
+        #               'sflowPolling':self.sflowPolling.get()}
+        #nflowvalues = {'nflowTarget':self.nflowTarget.get(),
+        #               'nflowTimeout':self.nflowTimeout.get(),
+        #               'nflowAddId':str(self.nflowAddId.get())}
+        self.result = {'ipBase':ipBase,
+                       'terminalType':terminalType,
+                       'dpctl':dpctl,
+                       #'sflow':sflowValues,
+                       #'netflow':nflowvalues,
+                       'getMetrics': getMetrics,
+                       'metricsTimer': metricsTimer,
+                       'startCLI':startCLI,
+                       'dbPrefs':{'dbName': dbName,
+                                  'dbPort': dbPort,
+                                  'dbUser': dbUser,
+                                  'dbPass': dbPass,
+                                  'dbHost': dbHost
+                                  },
+                       }
+        #if sw == 'Indigo Virtual Switch':
+        #    self.result['switchType'] = 'ivs'
+        #    if StrictVersion(MININET_VERSION) < StrictVersion('2.1'):
+        #        self.ovsOk = False
+        #        showerror(title="Error",
+        #                  message='MiniNet version 2.1+ required. You have '+VERSION+'.')
+        #elif sw == 'Userspace Switch':
+        #    self.result['switchType'] = 'user'
+        #elif sw == 'Userspace Switch inNamespace':
+        #    self.result['switchType'] = 'userns'
+        #else:
+        #    self.result['switchType'] = 'ovs'
+
+        #self.ovsOk = True
+        #if ovsOf11 == "1":
+        #    ovsVer = self.getOvsVersion()
+        #    if StrictVersion(ovsVer) < StrictVersion('2.0'):
+        #        self.ovsOk = False
+        #        showerror(title="Error",
+        #                  message='Open vSwitch version 2.0+ required. You have '+ovsVer+'.')
+        #if ovsOf12 == "1" or ovsOf13 == "1":
+        #    ovsVer = self.getOvsVersion()
+        #    if StrictVersion(ovsVer) < StrictVersion('1.10'):
+        #        self.ovsOk = False
+        #        showerror(title="Error",
+        #                  message='Open vSwitch version 1.10+ required. You have '+ovsVer+'.')
+
+        #if self.ovsOk:
+        #    self.result['openFlowVersions']={'ovsOf10':ovsOf10,
+        #                                     'ovsOf11':ovsOf11,
+        #                                     'ovsOf12':ovsOf12,
+        #                                     'ovsOf13':ovsOf13}
+        #else:
+        #    self.result = None
+
+    #@staticmethod
+    #def getOvsVersion():
+    #    "Return OVS version"
+    #    outp = quietRun("ovs-vsctl show")
+    #    r = r'ovs_version: "(.*)"'
+    #    m = re.search(r, outp)
+    #    if m is None:
+    #        print 'Version check failed'
+    #        return None
+    #    else:
+    #        print 'Open vSwitch version is '+m.group(1)
+    #        return m.group(1)
+
+
 class CustomDialog(object):
 
         # TODO: Fix button placement and Title and window focus lock
@@ -102,9 +399,9 @@ class CustomDialog(object):
                        bd=4, command=self.okAction)
             okButton.grid(row=1, column=0, sticky=E)
 
-            canlceButton = Button(buttonFrame, width=8, text='Cancel', relief='groove',
+            cancelButton = Button(buttonFrame, width=8, text='Cancel', relief='groove',
                         bd=4, command=self.cancelAction)
-            canlceButton.grid(row=1, column=1, sticky=W)
+            cancelButton.grid(row=1, column=1, sticky=W)
 
         def body(self, master):
             self.rootFrame = master
@@ -125,8 +422,8 @@ class HostDialog(CustomDialog):
 
             self.prefValues = prefDefaults
             self.result = None
-	    self.isRouter = isRouter
-	    self.title = title
+            self.isRouter = isRouter
+            self.title = title
 
             CustomDialog.__init__(self, master, title)
 
@@ -151,37 +448,37 @@ class HostDialog(CustomDialog):
             Label(self.propFrame, text="Amount CPU:").grid(row=2, sticky=E)
             self.cpuEntry = Entry(self.propFrame)
             self.cpuEntry.grid(row=2, column=1)
-	    Label(self.propFrame, text="%").grid(row=2, column=2, sticky=W)
+            Label(self.propFrame, text="%").grid(row=2, column=2, sticky=W)
             if 'cpu' in self.prefValues:
                 self.cpuEntry.insert(0, str(self.prefValues['cpu']))
             
-	    # Field for Memory
+            # Field for Memory
             Label(self.propFrame, text="Amount MEM:").grid(row=3, sticky=E)
             self.memEntry = Entry(self.propFrame)
             self.memEntry.grid(row=3, column=1)
-	    Label(self.propFrame, text="%").grid(row=3, column=2, sticky=W)
+            Label(self.propFrame, text="%").grid(row=3, column=2, sticky=W)
             if 'mem' in self.prefValues:
                 self.memEntry.insert(0, str(self.prefValues['mem']))
-	    
-	    # Field for Cache
+        
+            # Field for Cache
             Label(self.propFrame, text="Amount CACHE:").grid(row=4, sticky=E)
             self.cacheEntry = Entry(self.propFrame)
             self.cacheEntry.grid(row=4, column=1)
-	    Label(self.propFrame, text="KBytes").grid(row=4, column=2, sticky=W)
+            Label(self.propFrame, text="KBytes").grid(row=4, column=2, sticky=W)
             if 'cache' in self.prefValues:
                 self.cacheEntry.insert(0, str(self.prefValues['cache']))
 
             # Start command
-	    #print self.isRouter
-	    if self.isRouter == 'False':
-		    Label(self.propFrame, text="Start Command:").grid(row=5, sticky=E)
-		    self.startEntry = Entry(self.propFrame)
-		    self.startEntry.grid(row=5, column=1, sticky='nswe', columnspan=3)
-		    Label(self.propFrame, text="[full path]").grid(row=5, column=2, sticky=W)
-		    if 'startCommand' in self.prefValues:
-		        self.startEntry.insert(0, str(self.prefValues['startCommand']))
-	    else: 
-		self.startEntry= Entry(self.propFrame)
+            #print self.isRouter
+            if self.isRouter == 'False':
+                Label(self.propFrame, text="Start Command:").grid(row=5, sticky=E)
+                self.startEntry = Entry(self.propFrame)
+                self.startEntry.grid(row=5, column=1, sticky='nswe', columnspan=3)
+                Label(self.propFrame, text="[full path]").grid(row=5, column=2, sticky=W)
+                if 'startCommand' in self.prefValues:
+                    self.startEntry.insert(0, str(self.prefValues['startCommand']))
+            else: 
+                self.startEntry= Entry(self.propFrame)
 
             ### TAB 2
             # FIB Entries
@@ -200,6 +497,8 @@ class HostDialog(CustomDialog):
                 fibList = self.prefValues['fibEntries']
             for fibEntr in fibList:
                 if isinstance( fibEntr, tuple ):
+                    self.fibTableFrame.addRow(value=fibEntr)
+                elif (isinstance( fibEntr, list ) and (len(fibEntr)==2)):
                     self.fibTableFrame.addRow(value=fibEntr)
                 else:
                     self.fibTableFrame.addRow(value=[fibEntr,''])
@@ -517,7 +816,7 @@ class LinkDialog(tkSimpleDialog.Dialog):
             Label(master, text="Delay:").grid(row=1, sticky=E)
             self.e2 = Entry(master)
             self.e2.grid(row=1, column=1)
-	    Label(master, text="[0-1000] ms").grid(row=1, column=2, sticky=W)
+            Label(master, text="[0-1000] ms").grid(row=1, column=2, sticky=W)
             if 'delay' in self.linkValues:
                 self.e2.insert(0, self.linkValues['delay'])
 
@@ -671,32 +970,43 @@ class MiniEdit( Frame ):
     "A simple network editor for MiniCCNx."
 
     def __init__( self, parent=None, cheight=600, cwidth=1000, template_file='miniccnx.conf' ):
-	
-	self.template_file = template_file
-	
-	self.defaultIpBase='10.0.0.0/8'
 
-	self.nflowDefaults = {'nflowTarget':'',
-			      'nflowTimeout':'600',
-			      'nflowAddId':'0'}
-	self.sflowDefaults = {'sflowTarget':'',
-			      'sflowSampling':'400',
-			      'sflowHeader':'128',
-			      'sflowPolling':'30'}
-
-	self.appPrefs={
-		"ipBase": self.defaultIpBase,
-		"startCLI": "0",
-		"terminalType": 'xterm',
-		"switchType": 'ovs',
-		"dpctl": '',
-		'sflow':self.sflowDefaults,
- 		'netflow':self.nflowDefaults,
- 		'openFlowVersions':{'ovsOf10':'1',
- 		'ovsOf11':'0',
- 		'ovsOf12':'0',
- 		'ovsOf13':'0'}
-		}
+        self.hosts=[]
+        self.collectors=[]
+    
+        self.template_file = template_file
+        
+        self.defaultIpBase='10.0.0.0/8'
+    
+        self.nflowDefaults = {'nflowTarget':'',
+                      'nflowTimeout':'600',
+                      'nflowAddId':'0'}
+        self.sflowDefaults = {'sflowTarget':'',
+                      'sflowSampling':'400',
+                      'sflowHeader':'128',
+                      'sflowPolling':'30'}
+    
+        self.appPrefs={
+            "ipBase": self.defaultIpBase,
+            "startCLI": "0",
+            "terminalType": 'xterm',
+            "getMetrics": "1",
+            "metricsTimer": "30",
+            "dbPrefs": {"dbName": "miniccnx_data",
+                        "dbPort": "8086",
+                        "dbUser": "root",
+                        "dbPass": "root",
+                        "dbHost": "localhost",
+                        },
+            "dpctl": '',
+            #"switchType": 'ovs',
+            #'sflow':self.sflowDefaults,
+             #'netflow':self.nflowDefaults,
+             #'openFlowVersions':{'ovsOf10':'1',
+             #'ovsOf11':'0',
+             #'ovsOf12':'0',
+             #'ovsOf13':'0'}
+            }
 
         Frame.__init__( self, parent )
         self.action = None
@@ -726,7 +1036,7 @@ class MiniEdit( Frame ):
         self.images = miniEditImages()
         self.buttons = {}
         self.active = None
-        self.tools = ( 'Select', 'Host', 'Switch', 'LegacySwitch', 'LegacyRouter', 'NetLink', 'Controller' )
+        self.tools = ( 'Select', 'Host', 'LegacyRouter', 'NetLink')#, 'Switch', 'LegacySwitch', 'Controller' )
         self.customColors = { 'Switch': 'darkGreen', 'Host': 'blue' }
         self.toolbar = self.createToolbar()
 
@@ -742,7 +1052,7 @@ class MiniEdit( Frame ):
 
         # Initialize node data
         self.nodeBindings = self.createNodeBindings()
-	self.nodePrefixes = { 'LegacyRouter': 'r', 'LegacySwitch': 's', 'Switch': 's', 'Host': 'h' , 'Controller': 'c'}
+        self.nodePrefixes = { 'LegacyRouter': 'r', 'LegacySwitch': 's', 'Switch': 's', 'Host': 'h' , 'Controller': 'c'}
         self.widgetToItem = {}
         self.itemToWidget = {}
 
@@ -754,17 +1064,34 @@ class MiniEdit( Frame ):
 
         # Keyboard bindings
         self.bind( '<Control-q>', lambda event: self.quit() )
+        self.bind( '<Control-s>', lambda event: self.saveTopology() )        
+        self.bind( '<Control-o>', lambda event: self.loadTopology() )
+        self.bind( '<Control-r>', lambda event: self.doRun() )
+        self.bind( '<Control-t>', lambda event: self.doStop() )
+        self.bind( '<Control-g>', lambda event: self.doGenerate() )
+        self.bind( '<Control-n>', lambda event: self.newTopology() )
+        self.bind( '<Control-comma>', lambda event: self.prefDetails() )
         self.bind( '<KeyPress-Delete>', self.deleteSelection )
         self.bind( '<KeyPress-BackSpace>', self.deleteSelection )
         self.focus()
 
-	#Mouse bindings
-	self.bind( '<Button-1>', lambda event: self.clearPopups )
+        #Mouse bindings
+        #self.bind( '<Button-1>', lambda event: self.clearPopups )
 
         self.hostPopup = Menu(self.top, tearoff=0)
         self.hostPopup.add_command(label='Host Options', font=self.font, command=self.hostDetails)
         #self.hostPopup.add_separator()
         #self.hostPopup.add_command(label='Properties', font=self.font, command=self.hostDetails )
+
+        self.hostRunPopup = Menu(self.top, tearoff=0)
+        #self.hostRunPopup.add_command(label='Host Options', font=self.font)
+        #self.hostRunPopup.add_separator()
+        self.hostRunPopup.add_command(label='Terminal', font=self.font, command=self.xterm )
+
+        self.legacyRouterRunPopup = Menu(self.top, tearoff=0)
+        #self.legacyRouterRunPopup.add_command(label='Router Options', font=self.font)
+        #self.legacyRouterRunPopup.add_separator()
+        self.legacyRouterRunPopup.add_command(label='Terminal', font=self.font, command=self.xterm )
 
         self.legacyRouterPopup = Menu(self.top, tearoff=0)
         self.legacyRouterPopup.add_command(label='Router Options', font=self.font, command=self.hostDetails)
@@ -774,14 +1101,21 @@ class MiniEdit( Frame ):
         #self.linkPopup.add_separator()
         #self.linkPopup.add_command(label='Properties', font=self.font, command=self.linkDetails )
 
-	self.switchPopup = Menu(self.top, tearoff=0)
+        self.linkRunPopup = Menu(self.top, tearoff=0)
+        #self.linkRunPopup.add_command(label='Link Options', font=self.font)
+        #self.linkRunPopup.add_separator()
+        self.linkRunPopup.add_command(label='Link Up', font=self.font, command=self.linkUp )
+        self.linkRunPopup.add_command(label='Link Down', font=self.font, command=self.linkDown )
+
+
+        self.switchPopup = Menu(self.top, tearoff=0)
         self.switchPopup.add_command(label='Switch Options', font=self.font, command=self.switchDetails)
         #self.switchPopup.add_separator()
         #self.switchPopup.add_command(label='Properties', font=self.font, command=self.switchDetails )
 
-	self.controllerPopup = Menu(self.top, tearoff=0)
+        self.controllerPopup = Menu(self.top, tearoff=0)
         self.controllerPopup.add_command(label='Controller Options', font=self.font, command=self.controllerDetails)
-	#self.controllerPopup.add_separator()
+        #self.controllerPopup.add_separator()
         #self.controllerPopup.add_command(label='Properties', font=self.font, command=self.controllerDetails )
 
         # Event handling initalization
@@ -792,11 +1126,11 @@ class MiniEdit( Frame ):
         self.links = {}
         self.hostOpts = {}
         self.switchOpts = {}
-	self.routerOpts = {}
+        self.routerOpts = {}
         self.hostCount = 0
-	self.routerCount = 0
-	self.switchCount = 0
-	self.controllerCount = 0
+        self.routerCount = 0
+        self.switchCount = 0
+        self.controllerCount = 0
         self.net = None
 
         # Close window gracefully
@@ -804,7 +1138,7 @@ class MiniEdit( Frame ):
 
     def quit( self ):
         "Stop our network, if any, then quit."
-        #sself.stop()
+        self.stop()
         Frame.quit( self )
 
     def createMenubar( self ): # MODIFICADO - OK
@@ -817,25 +1151,33 @@ class MiniEdit( Frame ):
 
         fileMenu = Menu( mbar, tearoff=False )
         mbar.add_cascade( label="File", font=font, menu=fileMenu )
-        fileMenu.add_command( label="New", font=font, command=self.newTopology )
-        fileMenu.add_command( label="Open", font=font, command=self.loadTopology )
-        fileMenu.add_command( label="Save", font=font, command=self.saveTopology )
-        fileMenu.add_command( label="Generate", font=font, command=self.doGenerate )
-        fileMenu.add_separator()
-        fileMenu.add_command( label='Quit', command=self.quit, font=font )
-	
+        fileMenu.add_command( label="New (ctrl+n)", font=font, command=self.newTopology )
+        fileMenu.add_command( label="Open (ctrl+o)", font=font, command=self.loadTopology )
+        fileMenu.add_command( label="Save (ctrl+s)", font=font, command=self.saveTopology )
+        fileMenu.add_command( label="Generate (ctrl+g)", font=font, command=self.doGenerate )
+        #fileMenu.add_separator()
+        #fileMenu.add_command( label='Quit', command=self.quit, font=font )
+    
         editMenu = Menu( mbar, tearoff=False )
         mbar.add_cascade( label="Edit", font=font, menu=editMenu )
         editMenu.add_command( label="Cut", font=font,
                               command=lambda: self.deleteSelection( None ) )
 
-	# Application menu
+    # Application menu
         appMenu = Menu( mbar, tearoff=False )
+        runMenu = Menu( mbar, tearoff=False )
+
+        mbar.add_cascade( label="Run", font=font, menu=runMenu )
+        runMenu.add_command( label="Run (ctrl+r)", font=font, command=self.doRun )
+        runMenu.add_command( label="Stop (ctrl+t)", font=font, command=self.doStop )
+
         mbar.add_cascade( label=self.appName, font=font, menu=appMenu )
+        appMenu.add_command( label='Preferences (ctrl+,)', command=self.prefDetails,
+                             font=font)
         appMenu.add_command( label='About Mini-CCNx', command=self.about,
                              font=font)
-        #appMenu.add_separator()
-        #appMenu.add_command( label='Quit', command=self.quit, font=font )
+        appMenu.add_separator()
+        appMenu.add_command( label='Quit (ctrl+q)', command=self.quit, font=font )
 
     # Canvas - TUDO IGUAL - OK
 
@@ -902,7 +1244,7 @@ class MiniEdit( Frame ):
         self.active = toolName
 
 
-    def createToolTip(self, widget, text): #NOVA - CRIA HINTS E TIPS
+    def createToolTip(self, widget, text):
         toolTip = ToolTip(widget)
         def enter(event):
             toolTip.showtip(text)
@@ -931,9 +1273,9 @@ class MiniEdit( Frame ):
         # Spacer
         Label( toolbar, text='' ).pack()
 
-	# abaixo copiado Mini-CCNx para criar botao Generate
+    # abaixo copiado Mini-CCNx para criar botao Generate
 
-        for cmd, color in [ ( 'Generate', 'darkGreen' ) ]:
+        for cmd, color in [ ( 'Stop', 'darkRed' ), ( 'Run', 'darkGreen' ), ( 'Generate', 'darkBlue' ) ]:
             doCmd = getattr( self, 'do' + cmd )
             b = Button( toolbar, text=cmd, font=self.smallFont,
                         fg=color, command=doCmd )
@@ -952,194 +1294,246 @@ class MiniEdit( Frame ):
         for tool in self.tools:
             self.buttons[ tool ].config( state='normal' )
 
-	toplevel = Toplevel()
-	label1 = Label(toplevel, text="Template file generated successfully", height=0, width=30)
-	label1.pack()
-	b=Button(toplevel, text="Ok", width=5, command=toplevel.destroy)
-	b.pack(side='bottom', padx=0,pady=0)
+        toplevel = Toplevel()
+        label1 = Label(toplevel, text="Template file generated successfully", height=0, width=30)
+        label1.pack()
+        b=Button(toplevel, text="Ok", width=5, command=toplevel.destroy)
+        b.pack(side='bottom', padx=0,pady=0)
+        toplevel.attributes("-topmost", True)
 
     def parseList ( self, customList ):
-	"Parse Lists (FIB Entries, external interfaces, controllers etc. for write on template file"
-	result=''
-	
-	for listEntry in customList:
-		entry = ','.join(map(str, listEntry))
-		result += entry + ' '
+        "Parse Lists (FIB Entries, external interfaces, controllers etc. for write on template file"
+        result=''
+        
+        for listEntry in customList:
+            entry = ','.join(map(str, listEntry))
+            result += entry + ' '
+    
+        return result
 
-	return result
+    
 
-    def buildTemplate( self ): #COPIA Mini-CCNx para criar Template
+    def buildTemplate( self, temp_template = ""):
         "Generate template"
+        
+        if ( temp_template ):
+            template = open(temp_template, 'w')
+        else: 
+            template = open(self.template_file, 'w')
 
-        template = open(self.template_file, 'w')
+        #Write preferences        
+        template.write('[preferences]\n')
+
+        for key in self.appPrefs.keys():
+            if ( key is "dbPrefs" ):
+                for entry in self.appPrefs[key]:
+                    template.write("%s: %s\n" % (entry, self.appPrefs[key][entry]))
+            else:
+                template.write("%s: %s\n" % (key, self.appPrefs[key]))
 
         # hosts
         template.write('[hosts]\n')
         for widget in self.widgetToItem:
             name = widget[ 'text' ]
             tags = self.canvas.gettags( self.widgetToItem[ widget ] )
-	    #print self.hostOpts[name]
+            #print self.hostOpts[name]
             if 'Host' in tags:
-		hOpts=self.hostOpts[name]
+                hOpts=self.hostOpts[name]
                 template.write(name + ': ')
-		if 'startCommand' in hOpts:
-			template.write(hOpts['startCommand'] + ' ')
-		else:
-			template.write('_ ')
-		if 'cache' in hOpts:
-			template.write('cache=' + hOpts['cache'] + ' ')
-		if 'cpu' in hOpts:
-			cpu=float(hOpts['cpu'])/100
-			template.write('cpu=' + repr(cpu) + ' ')
-		if 'mem' in hOpts:
-			mem=float(hOpts['mem'])/100
-			template.write('mem=' + repr(mem) + ' ')
-		if 'fibEntries' in hOpts:
-			customFib = self.parseList(hOpts['fibEntries'])
-			template.write(customFib)
-		template.write('\n')
+                if 'startCommand' in hOpts:
+                    template.write(hOpts['startCommand'] + ' ')
+                else:
+                    template.write('_ ')
+                if 'cache' in hOpts:
+                    template.write('cache=' + hOpts['cache'] + ' ')
+                if 'cpu' in hOpts:
+                    cpu=float(hOpts['cpu'])/100
+                    template.write('cpu=' + repr(cpu) + ' ')
+                if 'mem' in hOpts:
+                    mem=float(hOpts['mem'])/100
+                    template.write('mem=' + repr(mem) + ' ')
+                if 'fibEntries' in hOpts:
+                    customFib = self.parseList(hOpts['fibEntries'])
+                    template.write(customFib)
+                template.write('\n')
 
         # routers
         template.write('[routers]\n')
 
         for router in self.routerOpts.values():
 
-	    hasOpt='False'
-	    routerName=router['hostname']
-	    #nodetype=router['nodetype']
-	    #nodenum=router['nodenum']
-	    
-	    rOpts=self.routerOpts[routerName]
+            hasOpt='False'
+            routerName=router['hostname']
+            #nodetype=router['nodetype']
+            #nodenum=router['nodenum']
+            
+            rOpts=self.routerOpts[routerName]
+    
+            template.write(routerName + ': ')
+    
+            if 'cpu' in rOpts:
+                cpu=float(rOpts['cpu'])/100
+                template.write('cpu=' + repr(cpu) + ' ')
+                hasOpt='True'
+            if 'mem' in rOpts:
+                mem=float(rOpts['mem'])/100
+                template.write('mem=' + repr(mem) + ' ')
+                hasOpt='True'
+            if 'cache' in rOpts:
+                template.write('cache=' + rOpts['cache'] + ' ')
+                hasOpt='True'
+            if 'fibEntries' in rOpts:
+                customFib = self.parseList(rOpts['fibEntries'])
+                template.write(customFib)
+                hasOpt='True'
+            if hasOpt == 'False':
+                template.write('_')
+            template.write('\n')
 
-	    template.write(routerName + ': ')
-
-	    if 'cpu' in rOpts:
-		cpu=float(rOpts['cpu'])/100
-		template.write('cpu=' + repr(cpu) + ' ')
-		hasOpt='True'
-	    if 'mem' in rOpts:
-		mem=float(rOpts['mem'])/100
-		template.write('mem=' + repr(mem) + ' ')
-		hasOpt='True'
-	    if 'cache' in rOpts:
-		template.write('cache=' + rOpts['cache'] + ' ')
-		hasOpt='True'
-	    if 'fibEntries' in rOpts:
-		customFib = self.parseList(rOpts['fibEntries'])
-		template.write(customFib)
-		hasOpt='True'
-	    if hasOpt == 'False':
-		template.write('_\n')
-
-	# switches
+        # switches
         template.write('[switches]\n')
-
+        
         for switch in self.switchOpts.values():
 
-	    switchName=switch['hostname']
-	    
-	    #print(switch['switchType'])
-	    
-	    sOpts=self.switchOpts[switchName]
+            switchName=switch['hostname']
+            
+            #print(switch['switchType'])
+            
+            sOpts=self.switchOpts[switchName]
+    
+            template.write(switchName + ': switchType=' + switch['switchType'] + ' ')
+    
+            if switch['switchType'] == 'legacySwitch':
+                pass
+            else:
+                #print(sOpts)
+                if 'stopCommand' in sOpts:
+                    template.write('stopCommand=' + sOpts['stopCommand'] + ' ')
+    
+                if 'sflow' in sOpts:
+                    template.write('sflow=' + sOpts['sflow'] + ' ')
+    
+                if 'switchIP' in sOpts:
+                    template.write('switchIP=' + sOpts['switchIP'] + ' ')
+    
+                if 'dpid' in sOpts:
+                    template.write('dpid=' + sOpts['dpid'] + ' ')
+        
+                if 'dpctl' in sOpts:
+                    template.write('dpctl=' + sOpts['dpctl'] + ' ')
+        
+                if 'startCommand' in sOpts:
+                    template.write('startCommand=' + sOpts['startCommand'] + ' ')
+        
+                if 'netflow' in sOpts:
+                    template.write('netflow=' + sOpts['netflow'] + ' ')
+        
+                if 'externalInterfaces' in sOpts:
+                    extInt = self.parseList(sOpts['externalInterfaces'])
+                    template.write(extInt)
+                if 'controllers' in sOpts:
+                    controllers = self.parseList(sOpts['controllers'])
+                    template.write(controllers)
 
-	    template.write(switchName + ': switchType=' + switch['switchType'] + ' ')
+            template.write('\n')
 
-	    if switch['switchType'] == 'legacySwitch':
-		pass
-	    else:
-		#print(sOpts)
-	    	if 'stopCommand' in sOpts:
-			template.write('stopCommand=' + sOpts['stopCommand'] + ' ')
-
-	    	if 'sflow' in sOpts:
-			template.write('sflow=' + sOpts['sflow'] + ' ')
-
-	  	if 'switchIP' in sOpts:
-			template.write('switchIP=' + sOpts['switchIP'] + ' ')
-
-		if 'dpid' in sOpts:
-			template.write('dpid=' + sOpts['dpid'] + ' ')
-
-		if 'dpctl' in sOpts:
-			template.write('dpctl=' + sOpts['dpctl'] + ' ')
-
-		if 'startCommand' in sOpts:
-			template.write('startCommand=' + sOpts['startCommand'] + ' ')
-
-		if 'netflow' in sOpts:
-			template.write('netflow=' + sOpts['netflow'] + ' ')
-
-	 	if 'externalInterfaces' in sOpts:
-			extInt = self.parseList(sOpts['externalInterfaces'])
-			template.write(extInt)
-		if 'controllers' in sOpts:
-			controllers = self.parseList(sOpts['controllers'])
-			template.write(controllers)
-
-	    template.write('\n')
-
-	# controllers
+        # controllers
         template.write('[controllers]\n')
 
         for controller in self.controllers.values():
 
-	    hasOpt='False'
-	    controllerName=controller['hostname']
-	    #nodetype=router['nodetype']
-	    #nodenum=router['nodenum']
-	    
-	    cOpts=self.controllers[controllerName]
+            hasOpt='False'
+            controllerName=controller['hostname']
+            #nodetype=router['nodetype']
+            #nodenum=router['nodenum']
+            
+            cOpts=self.controllers[controllerName]
+    
+            template.write(controllerName + ': ')
+    
+            if 'remotePort' in cOpts:
+                template.write('remotePort=' + repr(cOpts['remotePort']) + ' ')
+                hasOpt='True'
+            if 'controllerProtocol' in cOpts:
+                template.write('controllerProtocol=' + cOpts['controllerProtocol'] + ' ')
+                hasOpt='True'
+            if 'remoteIP' in cOpts:
+                template.write('remoteIP=' + cOpts['remoteIP'] + ' ')
+                hasOpt='True'
+            if 'controllerType' in cOpts:
+                template.write('controllerType=' + cOpts['controllerType'] + ' ')
+                hasOpt='True'
+            if hasOpt == 'False':
+                template.write('_')
 
-	    template.write(controllerName + ': ')
-
-	    if 'remotePort' in cOpts:
-		template.write('remotePort=' + repr(cOpts['remotePort']) + ' ')
-		hasOpt='True'
-	    if 'controllerProtocol' in cOpts:
-		template.write('controllerProtocol=' + cOpts['controllerProtocol'] + ' ')
-		hasOpt='True'
-	    if 'remoteIP' in cOpts:
-		template.write('remoteIP=' + cOpts['remoteIP'] + ' ')
-		hasOpt='True'
-	    if 'controllerType' in cOpts:
-		template.write('controllerType=' + cOpts['controllerType'] + ' ')
-		hasOpt='True'
-	    if hasOpt == 'False':
-		template.write('_')
-
-	    template.write('\n')
+            template.write('\n')
 
         # Make links
         template.write('[links]\n')
         for link in self.links.values():
-             dst=link['dest']
-	     src=link['src']
-	     linkopts=link['linkOpts']
-	     linktype=link['type']
+            dst=link['dest']
+            src=link['src']
+            linkopts=link['linkOpts']
+            linktype=link['type']
 
-             srcName, dstName = src[ 'text' ], dst[ 'text' ]
-             template.write(srcName + ':' + dstName + ' ')
-	     if 'bw' in linkopts:
-	     	template.write('bw=' + str(linkopts['bw']) + ' ' )
-	     if 'loss' in linkopts:
-	     	template.write('loss=' + repr(linkopts['loss']) + ' ' )
-	     if 'delay' in linkopts:
-	     	template.write('delay=' + str(linkopts['delay']))
-	     
-	     template.write('\n')
+            srcName, dstName = src[ 'text' ], dst[ 'text' ]
+            template.write(srcName + ':' + dstName + ' ')
+            if 'bw' in linkopts:
+                template.write('bw=' + str(linkopts['bw']) + ' ' )
+            if 'loss' in linkopts:
+                template.write('loss=' + repr(linkopts['loss']) + ' ' )
+            if 'delay' in linkopts:
+                template.write('delay=' + str(linkopts['delay']))
+                
+            template.write('\n')
 
-	template.close()
+        template.close()
+
+    def doRun( self ):
+        "Run command."
+
+        self.activate( 'Select' )
+
+        for tool in self.tools:
+            self.buttons[ tool ].config( state='disabled' )
+
+        #self.update_idletasks()
+
+        progress = Toplevel(bd=2, relief='flat')
+        progress.title("Operation in progess")
+        text=Label(progress, text="Starting your network, please wait...", font='Helvetica 12', bg='white')
+        text.pack()
+        print('comecou')
+        self.startCCN()
+        print('terminou')
+        progress.destroy()
+
+    def doStop( self ):
+        "Stop command."
+
+        progress = Toplevel(bd=4, relief='flat')
+        progress.title("Operation in progess")
+        text=Label(progress, text="Stopping your network, please wait...", font='Helvetica 12', bg='white')
+        text.pack()
+
+        self.stop()
+
+        for tool in self.tools:
+            self.buttons[ tool ].config( state='normal' )
+
+        progress.destroy() 
 
     def addNode( self, node, nodeNum, x, y, name=None):
         "Add a new node to our canvas."
-	if 'Switch' == node:
-	    self.switchCount += 1
-	if 'LegacyRouter' == node:
-	    self.routerCount += 1
+
+        if 'Switch' == node:
+            self.switchCount += 1
+        if 'LegacyRouter' == node:
+            self.routerCount += 1
         if 'Host' == node:
             self.hostCount += 1
-	if 'Controller' == node:
-	    self.controllerCount += 1
+        if 'Controller' == node:
+            self.controllerCount += 1
         if name is None:
             name = self.nodePrefixes[ node ] + nodeNum
         self.addNamedNode(node, name, x, y)
@@ -1182,18 +1576,18 @@ class MiniEdit( Frame ):
         # Load application preferences
         if 'application' in loadedTopology:
             self.appPrefs = dict(self.appPrefs.items() + loadedTopology['application'].items())
-            if "ovsOf10" not in self.appPrefs["openFlowVersions"]:
-                self.appPrefs["openFlowVersions"]["ovsOf10"] = '0'
-            if "ovsOf11" not in self.appPrefs["openFlowVersions"]:
-                self.appPrefs["openFlowVersions"]["ovsOf11"] = '0'
-            if "ovsOf12" not in self.appPrefs["openFlowVersions"]:
-                self.appPrefs["openFlowVersions"]["ovsOf12"] = '0'
-            if "ovsOf13" not in self.appPrefs["openFlowVersions"]:
-                self.appPrefs["openFlowVersions"]["ovsOf13"] = '0'
-            if "sflow" not in self.appPrefs:
-                self.appPrefs["sflow"] = self.sflowDefaults
-            if "netflow" not in self.appPrefs:
-                self.appPrefs["netflow"] = self.nflowDefaults
+            #if "ovsOf10" not in self.appPrefs["openFlowVersions"]:
+            #    self.appPrefs["openFlowVersions"]["ovsOf10"] = '0'
+            #if "ovsOf11" not in self.appPrefs["openFlowVersions"]:
+            #    self.appPrefs["openFlowVersions"]["ovsOf11"] = '0'
+            #if "ovsOf12" not in self.appPrefs["openFlowVersions"]:
+            #    self.appPrefs["openFlowVersions"]["ovsOf12"] = '0'
+            #if "ovsOf13" not in self.appPrefs["openFlowVersions"]:
+            #    self.appPrefs["openFlowVersions"]["ovsOf13"] = '0'
+            #if "sflow" not in self.appPrefs:
+            #    self.appPrefs["sflow"] = self.sflowDefaults
+            #if "netflow" not in self.appPrefs:
+            #    self.appPrefs["netflow"] = self.nflowDefaults
 
         # Load controllers
         if 'controllers' in loadedTopology:
@@ -1219,6 +1613,7 @@ class MiniEdit( Frame ):
 
 
         # Load hosts
+
         hosts = loadedTopology['hosts']
         for host in hosts:
             nodeNum = host['number']
@@ -1234,6 +1629,7 @@ class MiniEdit( Frame ):
             self.addNode('Host', nodeNum, float(x), float(y), name=hostname)
 
             # Fix JSON converting tuple to list when saving
+
             if 'privateDirectory' in host['opts']:
                 newDirList = []
                 for privateDir in host['opts']['privateDirectory']:
@@ -1242,6 +1638,7 @@ class MiniEdit( Frame ):
                     else:
                         newDirList.append(privateDir)
                 host['opts']['privateDirectory'] = newDirList
+
             self.hostOpts[hostname] = host['opts']
             icon = self.findWidgetByName(hostname)
             icon.bind('<Button-3>', self.do_hostPopup )
@@ -1311,13 +1708,12 @@ class MiniEdit( Frame ):
                 self.createControlLinkBindings()
                 self.link = self.linkWidget = None
 
-	# Load routers
-	
+    # Load routers
         routers = loadedTopology['routers']
         for router in routers:
             nodeNum = router['number']
             hostname = 'r'+nodeNum
-	    #print router
+        #print router
             if 'nodeType' not in router['opts']:
                 router['opts']['nodeType'] = 'legacyRouter'
             if 'hostname' in router['opts']:
@@ -1328,6 +1724,7 @@ class MiniEdit( Frame ):
                 router['opts']['nodeNum'] = int(nodeNum)
             x = router['x']
             y = router['y']
+
             if router['opts']['nodeType'] == "legacyRouter":
                 self.addNode('LegacyRouter', nodeNum, float(x), float(y), name=hostname)
                 icon = self.findWidgetByName(hostname)
@@ -1364,13 +1761,18 @@ class MiniEdit( Frame ):
         for widget in self.widgetToItem.keys():
             self.deleteItem( self.widgetToItem[ widget ] )
         self.hostCount = 0
+        self.routerCount = 0
         self.switchCount = 0
         self.controllerCount = 0
         self.links = {}
+        self.hosts = []
+        self.routerOpts = {}
         self.hostOpts = {}
         self.switchOpts = {}
         self.controllers = {}
         self.appPrefs["ipBase"]= self.defaultIpBase
+
+        self.net = None
 
     def saveTopology( self ):
         "Save command."
@@ -1387,7 +1789,7 @@ class MiniEdit( Frame ):
 
             # Save Switches and Hosts
             hostsToSave = []
-	    routersToSave=[]
+            routersToSave=[]
             switchesToSave = []
             controllersToSave = []
             for widget in self.widgetToItem:
@@ -1408,7 +1810,7 @@ class MiniEdit( Frame ):
                                   'y':str(y1),
                                   'opts':self.hostOpts[name] }
                     hostsToSave.append(nodeToSave)
-		elif 'LegacyRouter' in tags:
+                elif 'LegacyRouter' in tags:
                     nodeNum = self.routerOpts[name]['nodeNum']
                     nodeToSave = {'number':str(nodeNum),
                                   'x':str(x1),
@@ -1422,6 +1824,7 @@ class MiniEdit( Frame ):
                     controllersToSave.append(nodeToSave)
                 else:
                     raise Exception( "Cannot create mystery node: " + name )
+                
             savingDictionary['hosts'] = hostsToSave
             savingDictionary['switches'] = switchesToSave
             savingDictionary['controllers'] = controllersToSave
@@ -1519,16 +1922,6 @@ class MiniEdit( Frame ):
             self.deleteItem( self.selection )
         self.selectItem( None )
 
-    def clearPopups(self):
-	print 'Entrou funcao clear_popups'
-
-    	if isHostPopup == True:
-		print 'Hostpopup = true'
-    		self.hostPopup.unpost
-		isHostPopup = False
-	#if isRouterPopup == True
-	#if isLinkPopup == True
-
     def nodeIcon( self, node, name ):
         "Create a new node icon."
         icon = Button( self.canvas, image=self.images[ node ],
@@ -1545,7 +1938,7 @@ class MiniEdit( Frame ):
         x, y = c.canvasx( event.x ), c.canvasy( event.y )
         name = self.nodePrefixes[ node ]
 
-	if 'Switch' == node:
+        if 'Switch' == node:
             self.switchCount += 1
             name = self.nodePrefixes[ node ] + str( self.switchCount )
             self.switchOpts[name] = {}
@@ -1553,8 +1946,8 @@ class MiniEdit( Frame ):
             self.switchOpts[name]['hostname']=name
             self.switchOpts[name]['switchType']='default'
             self.switchOpts[name]['controllers']=[]
-
-	if 'LegacySwitch' == node:
+    
+        if 'LegacySwitch' == node:
             self.switchCount += 1
             name = self.nodePrefixes[ node ] + str( self.switchCount )
             self.switchOpts[name] = {}
@@ -1562,8 +1955,8 @@ class MiniEdit( Frame ):
             self.switchOpts[name]['hostname']=name
             self.switchOpts[name]['switchType']='legacySwitch'
             self.switchOpts[name]['controllers']=[]
-
-	if 'Controller' == node:
+    
+        if 'Controller' == node:
             name = self.nodePrefixes[ node ] + str( self.controllerCount )
             ctrlr = { 'controllerType': 'ref',
                       'hostname': name,
@@ -1600,11 +1993,11 @@ class MiniEdit( Frame ):
             icon.bind('<Button-3>', self.do_legacyRouterPopup )
         if 'Host' == node:
             icon.bind('<Button-3>', self.do_hostPopup )
-	if 'Switch' == node:
+        if 'Switch' == node:
             icon.bind('<Button-3>', self.do_switchPopup )
-	if 'LegacySwitch' == node:
+        if 'LegacySwitch' == node:
             icon.bind('<Button-3>', self.do_legacySwitchPopup )
-	if 'Controller' == node:
+        if 'Controller' == node:
             icon.bind('<Button-3>', self.do_controllerPopup )
 
     def clickController( self, event ):
@@ -1849,21 +2242,21 @@ class MiniEdit( Frame ):
             about = Toplevel( bg='white' )
             about.title( 'About' )
             info = self.appName + ': a simple network editor for MiniCCNx - based on Miniedit'
-	    warning = 'Development version - not entirely functional!'
+            warning = 'Development version - not entirely functional!'
             #version = 'MiniEdit '+MINIEDIT_VERSION
-	    author = 'Carlos Cabral, Jan 2013'
-	    author2 = 'Caio Elias, Nov 2014'
+            author = 'Carlos Cabral, Jan 2013'
+            author2 = 'Caio Elias, Nov 2014'
             author3 = 'Originally by: Bob Lantz <rlantz@cs>, April 2010'
             enhancements = 'Enhancements by: Gregory Gee, Since July 2013'
             www = 'http://gregorygee.wordpress.com/category/miniedit/'
             line1 = Label( about, text=info, font='Helvetica 10 bold', bg=bg )
             line2 = Label( about, text=warning, font='Helvetica 9', bg=bg )
             line3 = Label( about, text=author, font='Helvetica 9', bg=bg )
-	    line4 = Label( about, text=author2, font='Helvetica 9', bg=bg )
-	    line5 = Label( about, text=author3, font='Helvetica 9', bg=bg )
+            line4 = Label( about, text=author2, font='Helvetica 9', bg=bg )
+            line5 = Label( about, text=author3, font='Helvetica 9', bg=bg )
             line6 = Label( about, text=enhancements, font='Helvetica 9', bg=bg )
             line7 = Entry( about, font='Helvetica 9', bg=bg, width=len(www), justify=CENTER )
-	    
+        
 
             line7.insert(0, www)
             line7.configure(state='readonly')
@@ -1872,8 +2265,8 @@ class MiniEdit( Frame ):
             line3.pack(pady=10 )
             line4.pack(pady=10 )
             line5.pack(pady=10 )
-	    line6.pack(pady=10 )
-	    line7.pack(pady=10 )
+            line6.pack(pady=10 )
+            line7.pack(pady=10 )
             hide = ( lambda about=about: about.withdraw() )
             self.aboutBox = about
             # Hide on close rather than destroying window
@@ -1893,56 +2286,56 @@ class MiniEdit( Frame ):
         name = widget[ 'text' ]
         tags = self.canvas.gettags( self.selection )
 
-	#print tags
+    #print tags
         if 'Host' in tags:
 
-        	prefDefaults = self.hostOpts[name]
-        	hostBox = HostDialog(self, title='Host Details', prefDefaults=prefDefaults, isRouter='False')
-        	self.master.wait_window(hostBox.top)
-        	if hostBox.result:
-		    newHostOpts = {'nodeNum':self.hostOpts[name]['nodeNum']}
+            prefDefaults = self.hostOpts[name]
+            hostBox = HostDialog(self, title='Host Details', prefDefaults=prefDefaults, isRouter='False')
+            self.master.wait_window(hostBox.top)
+            if hostBox.result:
+                newHostOpts = {'nodeNum':self.hostOpts[name]['nodeNum']}
 
-		    if len(hostBox.result['startCommand']) > 0:
-		        newHostOpts['startCommand'] = hostBox.result['startCommand']
-		    if hostBox.result['cpu']:
-		        newHostOpts['cpu'] = hostBox.result['cpu']
-		    if hostBox.result['mem']:
-		        newHostOpts['mem'] = hostBox.result['mem']
-		    if len(hostBox.result['hostname']) > 0:
-		        newHostOpts['hostname'] = hostBox.result['hostname']
-		        name = hostBox.result['hostname']
-		        widget[ 'text' ] = name
-		    if len(hostBox.result['cache']) > 0:
-		        newHostOpts['cache'] = hostBox.result['cache']
-		    if len(hostBox.result['fibEntries']) > 0:
-		        newHostOpts['fibEntries'] = hostBox.result['fibEntries']
-		    self.hostOpts[name] = newHostOpts
+                if len(hostBox.result['startCommand']) > 0:
+                    newHostOpts['startCommand'] = hostBox.result['startCommand']
+                if hostBox.result['cpu']:
+                    newHostOpts['cpu'] = hostBox.result['cpu']
+                if hostBox.result['mem']:
+                    newHostOpts['mem'] = hostBox.result['mem']
+                if len(hostBox.result['hostname']) > 0:
+                    newHostOpts['hostname'] = hostBox.result['hostname']
+                    name = hostBox.result['hostname']
+                    widget[ 'text' ] = name
+                if len(hostBox.result['cache']) > 0:
+                    newHostOpts['cache'] = hostBox.result['cache']
+                if len(hostBox.result['fibEntries']) > 0:
+                    newHostOpts['fibEntries'] = hostBox.result['fibEntries']
+                self.hostOpts[name] = newHostOpts
 
-		    print 'New host details for ' + name + ' = ' + str(newHostOpts)
+                print 'New host details for ' + name + ' = ' + str(newHostOpts)
 
-	elif 'LegacyRouter' in tags:
+        elif 'LegacyRouter' in tags:
 
-		prefDefaults = self.routerOpts[name]
-        	hostBox = HostDialog(self, title='Router Details', prefDefaults=prefDefaults, isRouter='True')
-        	self.master.wait_window(hostBox.top)
-        	if hostBox.result:
-		    newRouterOpts = {'nodeNum':self.routerOpts[name]['nodeNum']}
+            prefDefaults = self.routerOpts[name]
+            hostBox = HostDialog(self, title='Router Details', prefDefaults=prefDefaults, isRouter='True')
+            self.master.wait_window(hostBox.top)
+            
+            if hostBox.result:
+                newRouterOpts = {'nodeNum':self.routerOpts[name]['nodeNum']}
+                if hostBox.result['cpu']:
+                    newRouterOpts['cpu'] = hostBox.result['cpu']
+                if hostBox.result['mem']:
+                    newRouterOpts['mem'] = hostBox.result['mem']
+                if len(hostBox.result['hostname']) > 0:
+                    newRouterOpts['hostname'] = hostBox.result['hostname']
+                    name = hostBox.result['hostname']
+                    widget[ 'text' ] = name
+                if len(hostBox.result['cache']) > 0:
+                    newRouterOpts['cache'] = hostBox.result['cache']
+                if len(hostBox.result['fibEntries']) > 0:
+                    newRouterOpts['fibEntries'] = hostBox.result['fibEntries']
+                self.routerOpts[name] = newRouterOpts
 
-		    if hostBox.result['cpu']:
-		        newRouterOpts['cpu'] = hostBox.result['cpu']
-		    if hostBox.result['mem']:
-		        newRouterOpts['mem'] = hostBox.result['mem']
-		    if len(hostBox.result['hostname']) > 0:
-		        newRouterOpts['hostname'] = hostBox.result['hostname']
-		        name = hostBox.result['hostname']
-		        widget[ 'text' ] = name
-		    if len(hostBox.result['cache']) > 0:
-		        newRouterOpts['cache'] = hostBox.result['cache']
-		    if len(hostBox.result['fibEntries']) > 0:
-		        newRouterOpts['fibEntries'] = hostBox.result['fibEntries']
-		    self.routerOpts[name] = newRouterOpts
-
-		    print 'New host details for ' + name + ' = ' + str(newRouterOpts)
+                print 'New host details for ' + name + ' = ' + str(newRouterOpts)
 
     def switchDetails( self, _ignore=None ):
         if ( self.selection is None or
@@ -1982,6 +2375,30 @@ class MiniEdit( Frame ):
             self.switchOpts[name] = newSwitchOpts
             print 'New switch details for ' + name + ' = ' + str(newSwitchOpts)
 
+    def linkUp( self ):
+        if ( self.selection is None or
+             self.net is None):
+            return
+        link = self.selection
+        linkDetail =  self.links[link]
+        src = linkDetail['src']
+        dst = linkDetail['dest']
+        srcName, dstName = src[ 'text' ], dst[ 'text' ]
+        self.net.configLinkStatus(srcName, dstName, 'up')
+        self.canvas.itemconfig(link, dash=())
+
+    def linkDown( self ):
+        if ( self.selection is None or
+             self.net is None):
+            return
+        link = self.selection
+        linkDetail =  self.links[link]
+        src = linkDetail['src']
+        dst = linkDetail['dest']
+        srcName, dstName = src[ 'text' ], dst[ 'text' ]
+        self.net.configLinkStatus(srcName, dstName, 'down')
+        self.canvas.itemconfig(link, dash=(4, 4))    
+
     def linkDetails( self, _ignore=None ):
         if ( self.selection is None or
              self.net is not None):
@@ -1996,6 +2413,13 @@ class MiniEdit( Frame ):
         if linkBox.result is not None:
             linkDetail['linkOpts'] = linkBox.result
             print 'New link details = ' + str(linkBox.result)
+
+    def prefDetails( self ):
+        prefDefaults = self.appPrefs
+        prefBox = PrefsDialog(self, title='MiniCCNx Preferences', prefDefaults=prefDefaults)
+        print 'New Prefs = ' + str(prefBox.result)
+        if prefBox.result:
+            self.appPrefs = prefBox.result
 
     def controllerDetails( self ):
         if ( self.selection is None or
@@ -2098,14 +2522,482 @@ class MiniEdit( Frame ):
         del self.itemToWidget[ item ]
         del self.widgetToItem[ widget ]
 
+    def do_controllerPopup(self, event):
+        # display the popup menu
+        if self.net is None:
+            try:
+                self.controllerPopup.tk_popup(event.x_root, event.y_root, 0)
+            finally:
+                # make sure to release the grab (Tk 8.0a1 only)
+                self.controllerPopup.grab_release()
+
+    def buildNodes( self, net):
+        # Make nodes
+        print "Getting Hosts and Switches."
+        for widget in self.widgetToItem:
+            name = widget[ 'text' ]
+            tags = self.canvas.gettags( self.widgetToItem[ widget ] )
+            #print name+' has '+str(tags)
+
+            if 'Switch' in tags:
+                opts = self.switchOpts[name]
+                #print str(opts)
+
+                # Create the correct switch class
+                switchClass = customOvs
+                switchParms={}
+                if 'dpctl' in opts:
+                    switchParms['listenPort']=int(opts['dpctl'])
+                if 'dpid' in opts:
+                    switchParms['dpid']=opts['dpid']
+                if opts['switchType'] == 'default':
+                    if self.appPrefs['switchType'] == 'ivs':
+                        switchClass = IVSSwitch
+                    elif self.appPrefs['switchType'] == 'user':
+                        switchClass = CustomUserSwitch
+                    elif self.appPrefs['switchType'] == 'userns':
+                        switchParms['inNamespace'] = True
+                        switchClass = CustomUserSwitch
+                    else:
+                        switchClass = customOvs
+                elif opts['switchType'] == 'user':
+                    switchClass = CustomUserSwitch
+                elif opts['switchType'] == 'userns':
+                    switchClass = CustomUserSwitch
+                    switchParms['inNamespace'] = True
+                elif opts['switchType'] == 'ivs':
+                    switchClass = IVSSwitch
+                else:
+                    switchClass = customOvs
+
+                if switchClass == customOvs:
+                    # Set OpenFlow versions
+                    self.openFlowVersions = []
+                    if self.appPrefs['openFlowVersions']['ovsOf10'] == '1':
+                        self.openFlowVersions.append('OpenFlow10')
+                    if self.appPrefs['openFlowVersions']['ovsOf11'] == '1':
+                        self.openFlowVersions.append('OpenFlow11')
+                    if self.appPrefs['openFlowVersions']['ovsOf12'] == '1':
+                        self.openFlowVersions.append('OpenFlow12')
+                    if self.appPrefs['openFlowVersions']['ovsOf13'] == '1':
+                        self.openFlowVersions.append('OpenFlow13')
+                    protoList = ",".join(self.openFlowVersions)
+                    switchParms['protocols'] = protoList
+                newSwitch = net.addSwitch( name , cls=switchClass, **switchParms)
+
+                # Some post startup config
+                if switchClass == CustomUserSwitch:
+                    if 'switchIP' in opts:
+                        if len(opts['switchIP']) > 0:
+                            newSwitch.setSwitchIP(opts['switchIP'])
+                if switchClass == customOvs:
+                    if 'switchIP' in opts:
+                        if len(opts['switchIP']) > 0:
+                            newSwitch.setSwitchIP(opts['switchIP'])
+
+                # Attach external interfaces
+                if 'externalInterfaces' in opts:
+                    for extInterface in opts['externalInterfaces']:
+                        if self.checkIntf(extInterface):
+                            Intf( extInterface, node=newSwitch )
+
+            elif 'LegacySwitch' in tags:
+                newSwitch = net.addSwitch( name , cls=LegacySwitch)
+            elif 'LegacyRouter' in tags:
+                opts = self.routerOpts[name]
+                #print str(opts)
+                ip = None
+                defaultRoute = None
+                cache=None
+                if 'defaultRoute' in opts and len(opts['defaultRoute']) > 0:
+                    defaultRoute = 'via '+opts['defaultRoute']
+                if 'ip' in opts and len(opts['ip']) > 0:
+                    ip = opts['ip']
+                if 'cache' in opts and len(opts['cache'])>0:
+                    cache = opts['cache']
+                else:
+                    nodeNum = self.routerOpts[name]['nodeNum']
+                    ipBaseNum, prefixLen = netParse( self.appPrefs['ipBase'] )
+                    ip = ipAdd(i=nodeNum, prefixLen=prefixLen, ipBaseNum=ipBaseNum)
+
+                # Create the correct host class
+                if 'cores' in opts or 'cpu' in opts:
+                    if 'privateDirectory' in opts:
+                        hostCls = partial( CPULimitedCCNHost,
+                                           privateDirs=opts['privateDirectory'] )
+                    else:
+                        hostCls=CPULimitedCCNHost
+                else:
+                    if 'privateDirectory' in opts:
+                        hostCls = partial( CCNHost,
+                                           privateDirs=opts['privateDirectory'] )
+                    else:
+                        hostCls=CCNHost
+                print hostCls
+                newHost = net.addHost( name,
+                                       cls=hostCls,
+                                       ip=ip,
+                                       defaultRoute=defaultRoute,
+                                       cache=cache
+                                      )
+
+                # Set the CPULimitedHost specific options
+                if 'cores' in opts:
+                    newHost.setCPUs(cores = opts['cores'])
+                if 'cpu' in opts:
+                    newHost.setCPUFrac(f=opts['cpu'], sched=opts['sched'])
+
+                # Attach external interfaces
+                if 'externalInterfaces' in opts:
+                    for extInterface in opts['externalInterfaces']:
+                        if self.checkIntf(extInterface):
+                            Intf( extInterface, node=newHost )
+                if 'vlanInterfaces' in opts:
+                    if len(opts['vlanInterfaces']) > 0:
+                        print 'Checking that OS is VLAN prepared'
+                        self.pathCheck('vconfig', moduleName='vlan package')
+                        moduleDeps( add='8021q' )
+
+                self.hosts.append(newHost)
+
+            elif 'Host' in tags:
+                opts = self.hostOpts[name]
+                #print str(opts)
+                ip = None
+                defaultRoute = None
+                cache=None
+                if 'defaultRoute' in opts and len(opts['defaultRoute']) > 0:
+                    defaultRoute = 'via '+opts['defaultRoute']
+                if 'ip' in opts and len(opts['ip']) > 0:
+                    ip = opts['ip']
+                if 'cache' in opts and len(opts['cache'])>0:
+                    cache = opts['cache']
+                else:
+                    nodeNum = self.hostOpts[name]['nodeNum']
+                    ipBaseNum, prefixLen = netParse( self.appPrefs['ipBase'] )
+                    ip = ipAdd(i=nodeNum, prefixLen=prefixLen, ipBaseNum=ipBaseNum)
+
+                # Create the correct host class
+                if 'cores' in opts or 'cpu' in opts:
+                    if 'privateDirectory' in opts:
+                        hostCls = partial( CPULimitedCCNHost,
+                                           privateDirs=opts['privateDirectory'] )
+                    else:
+                        hostCls=CPULimitedCCNHost
+                else:
+                    if 'privateDirectory' in opts:
+                        hostCls = partial( CCNHost,
+                                           privateDirs=opts['privateDirectory'] )
+                    else:
+                        hostCls=CCNHost
+                print hostCls
+                newHost = net.addHost( name,
+                                       cls=hostCls,
+                                       ip=ip,
+                                       defaultRoute=defaultRoute,
+                                       cache=cache
+                                      )
+
+                # Set the CPULimitedHost specific options
+                if 'cores' in opts:
+                    newHost.setCPUs(cores = opts['cores'])
+                if 'cpu' in opts:
+                    newHost.setCPUFrac(f=opts['cpu'], sched=opts['sched'])
+
+                # Attach external interfaces
+                if 'externalInterfaces' in opts:
+                    for extInterface in opts['externalInterfaces']:
+                        if self.checkIntf(extInterface):
+                            Intf( extInterface, node=newHost )
+                if 'vlanInterfaces' in opts:
+                    if len(opts['vlanInterfaces']) > 0:
+                        print 'Checking that OS is VLAN prepared'
+                        self.pathCheck('vconfig', moduleName='vlan package')
+                        moduleDeps( add='8021q' )
+
+                self.hosts.append(newHost)
+
+            elif 'Controller' in tags:
+                opts = self.controllers[name]
+
+                # Get controller info from panel
+                controllerType = opts['controllerType']
+                if 'controllerProtocol' in opts:
+                    controllerProtocol = opts['controllerProtocol']
+                else:
+                    controllerProtocol = 'tcp'
+                    opts['controllerProtocol'] = 'tcp'
+                controllerIP = opts['remoteIP']
+                controllerPort = opts['remotePort']
+
+                # Make controller
+                print 'Getting controller selection:'+controllerType
+                if controllerType == 'remote':
+                    net.addController(name=name,
+                                      controller=RemoteController,
+                                      ip=controllerIP,
+                                      protocol=controllerProtocol,
+                                      port=controllerPort)
+                elif controllerType == 'inband':
+                    net.addController(name=name,
+                                      controller=InbandController,
+                                      ip=controllerIP,
+                                      protocol=controllerProtocol,
+                                      port=controllerPort)
+                elif controllerType == 'ovsc':
+                    net.addController(name=name,
+                                      controller=OVSController,
+                                      protocol=controllerProtocol,
+                                      port=controllerPort)
+                else:
+                    net.addController(name=name,
+                                      controller=Controller,
+                                      protocol=controllerProtocol,
+                                      port=controllerPort)
+
+            else:
+                raise Exception( "Cannot create mystery node: " + name )
+
+    @staticmethod
+    def pathCheck( *args, **kwargs ):
+        "Make sure each program in *args can be found in $PATH."
+        moduleName = kwargs.get( 'moduleName', 'it' )
+        for arg in args:
+            if not quietRun( 'which ' + arg ):
+                showerror(title="Error",
+                      message= 'Cannot find required executable %s.\n' % arg +
+                       'Please make sure that %s is installed ' % moduleName +
+                       'and available in your $PATH.' )
+
+    def buildLinks( self, net):
+        # Make links
+        print "Getting Links."
+        for key,link in self.links.iteritems():
+            tags = self.canvas.gettags(key)
+            if 'data' in tags:
+                src=link['src']
+                dst=link['dest']
+                linkopts=link['linkOpts']
+                srcName, dstName = src[ 'text' ], dst[ 'text' ]
+                srcNode, dstNode = net.nameToNode[ srcName ], net.nameToNode[ dstName ]
+                if linkopts:
+                    net.addLink(srcNode, dstNode, cls=TCLink, **linkopts)
+                else:
+                    #print str(srcNode)
+                    #print str(dstNode)
+                    net.addLink(srcNode, dstNode)
+                self.canvas.itemconfig(key, dash=())
+
+
+    def build( self ):
+        print "Build network based on our topology."
+
+        dpctl = None
+        if len(self.appPrefs['dpctl']) > 0:
+            dpctl = int(self.appPrefs['dpctl'])
+
+        net = Mininet( topo=None,
+                       listenPort=dpctl,
+                       build=False,
+                       ipBase=self.appPrefs['ipBase'],
+                       preferences=self.appPrefs )
+
+        self.buildNodes(net)
+        self.buildLinks(net)
+
+        # Build network (we have to do this separately at the moment )
+        net.build()
+
+        return net
+
+    def postStartSetup( self ):
+
+        # Setup host details
+        for widget in self.widgetToItem:
+            name = widget[ 'text' ]
+            tags = self.canvas.gettags( self.widgetToItem[ widget ] )
+            if 'Host' in tags:
+                newHost = self.net.get(name)
+                opts = self.hostOpts[name]
+                # Attach vlan interfaces
+                if 'vlanInterfaces' in opts:
+                    for vlanInterface in opts['vlanInterfaces']:
+                        print 'adding vlan interface '+vlanInterface[1]
+                        newHost.cmdPrint('ifconfig '+name+'-eth0.'+vlanInterface[1]+' '+vlanInterface[0])
+                # Run User Defined Start Command
+                if 'startCommand' in opts:
+                    newHost.cmdPrint(opts['startCommand'])
+                if (self.appPrefs['getMetrics'] is '1'):
+                    print "Adding metrics collectors..."
+                    collector=MetricsCollector(newHost, self.appPrefs['metricsTimer'], self.appPrefs['dbPrefs'])
+                    self.collectors.append(collector)
+
+            if 'Switch' in tags:
+                newNode = self.net.get(name)
+                opts = self.switchOpts[name]
+                # Run User Defined Start Command
+                if 'startCommand' in opts:
+                    newNode.cmdPrint(opts['startCommand'])
+
+
+        # Configure NetFlow
+        #changed lines below for miniccnx
+        #nflowValues = self.appPrefs['netflow']
+        if False: #len(nflowValues['nflowTarget']) > 0:
+            nflowEnabled = False
+            nflowSwitches = ''
+            for widget in self.widgetToItem:
+                name = widget[ 'text' ]
+                tags = self.canvas.gettags( self.widgetToItem[ widget ] )
+
+                if 'Switch' in tags:
+                    opts = self.switchOpts[name]
+                    if 'netflow' in opts:
+                        if opts['netflow'] == '1':
+                            print name+' has Netflow enabled'
+                            nflowSwitches = nflowSwitches+' -- set Bridge '+name+' netflow=@MiniEditNF'
+                            nflowEnabled=True
+            if nflowEnabled:
+                nflowCmd = 'ovs-vsctl -- --id=@MiniEditNF create NetFlow '+ 'target=\\\"'+nflowValues['nflowTarget']+'\\\" '+ 'active-timeout='+nflowValues['nflowTimeout']
+                if nflowValues['nflowAddId'] == '1':
+                    nflowCmd = nflowCmd + ' add_id_to_interface=true'
+                else:
+                    nflowCmd = nflowCmd + ' add_id_to_interface=false'
+                print 'cmd = '+nflowCmd+nflowSwitches
+                call(nflowCmd+nflowSwitches, shell=True)
+
+            else:
+                print 'No switches with Netflow'
+        else:
+            print 'No NetFlow targets specified.'
+
+        # Configure sFlow
+        #changed the line below for miniccnx
+        #sflowValues = self.appPrefs['sflow']
+        if False: #len(sflowValues['sflowTarget']) > 0:
+            sflowEnabled = False
+            sflowSwitches = ''
+            for widget in self.widgetToItem:
+                name = widget[ 'text' ]
+                tags = self.canvas.gettags( self.widgetToItem[ widget ] )
+
+                if 'Switch' in tags:
+                    opts = self.switchOpts[name]
+                    if 'sflow' in opts:
+                        if opts['sflow'] == '1':
+                            print name+' has sflow enabled'
+                            sflowSwitches = sflowSwitches+' -- set Bridge '+name+' sflow=@MiniEditSF'
+                            sflowEnabled=True
+            if sflowEnabled:
+                sflowCmd = 'ovs-vsctl -- --id=@MiniEditSF create sFlow '+ 'target=\\\"'+sflowValues['sflowTarget']+'\\\" '+ 'header='+sflowValues['sflowHeader']+' '+ 'sampling='+sflowValues['sflowSampling']+' '+ 'polling='+sflowValues['sflowPolling']
+                print 'cmd = '+sflowCmd+sflowSwitches
+                call(sflowCmd+sflowSwitches, shell=True)
+
+            else:
+                print 'No switches with sflow'
+        else:
+            print 'No sFlow targets specified.'
+
+        ## NOTE: MAKE SURE THIS IS LAST THING CALLED
+        # Start the CLI if enabled
+        if self.appPrefs['startCLI'] == '1':
+            info( "\n\n NOTE: PLEASE REMEMBER TO EXIT THE CLI BEFORE YOU PRESS THE STOP BUTTON. Not exiting will prevent MiniEdit from quitting and will prevent you from starting the network again during this sessoin.\n\n")
+            CLI(self.net)
+
+    def startCCN (self):
+        "Starts CCN network"
+        temp_file = "/tmp/temp_mnccnx.conf"
+
+        self.buildTemplate (temp_template = temp_file)
+
+        #topo = CCNTopo(temp_template)
+        #executes miniccnx method to build everything
+        self.net = execute(template_file=temp_file, fromGUI = True)
+        os.remove(temp_file)
+
+    def start( self ):
+        "Start network."
+        if self.net is None:
+            self.net = self.build()
+
+            # Since I am going to inject per switch controllers.
+            # I can't call net.start().  I have to replicate what it
+            # does and add the controller options.
+            #self.net.start()
+            info( '**** Starting %s controllers\n' % len( self.net.controllers ) )
+            for controller in self.net.controllers:
+                info( str(controller) + ' ')
+                controller.start()
+            info('\n')
+            info( '**** Starting %s switches\n' % len( self.net.switches ) )
+            #for switch in self.net.switches:
+            #    info( switch.name + ' ')
+            #    switch.start( self.net.controllers )
+            for widget in self.widgetToItem:
+                name = widget[ 'text' ]
+                tags = self.canvas.gettags( self.widgetToItem[ widget ] )
+                if 'Switch' in tags:
+                    opts = self.switchOpts[name]
+                    switchControllers = []
+                    for ctrl in opts['controllers']:
+                        switchControllers.append(self.net.get(ctrl))
+                    info( name + ' ')
+                    # Figure out what controllers will manage this switch
+                    self.net.get(name).start( switchControllers )
+                if 'LegacySwitch' in tags:
+                    self.net.get(name).start( [] )
+                    info( name + ' ')
+            info('\n')
+
+            self.postStartSetup()
+
+    def stop( self ):
+        "Stop network."
+        if self.net is not None:
+            # Stop host details
+            for widget in self.widgetToItem:
+                name = widget[ 'text' ]
+                tags = self.canvas.gettags( self.widgetToItem[ widget ] )
+                if 'Host' in tags:
+                    newHost = self.net.get(name)
+                    opts = self.hostOpts[name]
+                    # Run User Defined Stop Command
+                    if 'stopCommand' in opts:
+                        newHost.cmdPrint(opts['stopCommand'])
+                if 'LegacyRouter' in tags:
+                    newHost = self.net.get(name)
+                    opts = self.routerOpts[name]
+                    # Run User Defined Stop Command
+                    if 'stopCommand' in opts:
+                        newHost.cmdPrint(opts['stopCommand'])
+                if 'Switch' in tags:
+                    newNode = self.net.get(name)
+                    opts = self.switchOpts[name]
+                    # Run User Defined Stop Command
+                    if 'stopCommand' in opts:
+                        newNode.cmdPrint(opts['stopCommand'])
+
+            for collector in self.collectors:
+                collector.stop()
+
+            self.net.stop()
+        cleanUpScreens()
+        self.net = None
+
     def do_linkPopup(self, event):
         # display the popup menu
-        if ( self.net is None ):
+        if self.net is None:
             try:
                 self.linkPopup.tk_popup(event.x_root, event.y_root)
             finally:
                 # make sure to release the grab (Tk 8.0a1 only)
                 self.linkPopup.grab_release()
+        else:
+            try:
+                self.linkRunPopup.tk_popup(event.x_root, event.y_root)
+            finally:
+                # make sure to release the grab (Tk 8.0a1 only)
+                self.linkRunPopup.grab_release()
 
     def do_controllerPopup(self, event):
         # display the popup menu
@@ -2118,22 +3010,34 @@ class MiniEdit( Frame ):
 
     def do_legacyRouterPopup(self, event):
         # display the popup menu
-        if ( self.net is None ):
+
+        if self.net is None:
             try:
                 self.legacyRouterPopup.tk_popup(event.x_root, event.y_root)
             finally:
                 # make sure to release the grab (Tk 8.0a1 only)
                 self.legacyRouterPopup.grab_release()
+        else:
+            try:
+                self.legacyRouterRunPopup.tk_popup(event.x_root, event.y_root,)
+            finally:
+                # make sure to release the grab (Tk 8.0a1 only)
+                self.legacyRouterRunPopup.grab_release()
 
     def do_hostPopup(self, event):
         # display the popup menu
-        if ( self.net is None ):
-		try:
-		    self.hostPopup.tk_popup(event.x_root, event.y_root)
-		    isHostPopup = True
-		finally:
-		    # make sure to release the grab (Tk 8.0a1 only)
-		    self.hostPopup.grab_release()
+        if self.net is None:
+            try:
+                self.hostPopup.tk_popup(event.x_root, event.y_root)
+            finally:
+                # make sure to release the grab (Tk 8.0a1 only)
+                self.hostPopup.grab_release()
+        else:
+            try:
+                self.hostRunPopup.tk_popup(event.x_root, event.y_root,)
+            finally:
+                # make sure to release the grab (Tk 8.0a1 only)
+                self.hostRunPopup.grab_release()
 
     def do_legacySwitchPopup(self, event):
         # display the popup menu
@@ -2204,7 +3108,7 @@ class MiniEdit( Frame ):
                  "invoke the Miniccnx CLI, and run tests." )
 
         usage = ( '%prog [options] [template_file]\n'
-		  '\nIf no template_file is given, generated template will be written to the file miniccnx.conf in the current directory.\n'
+          '\nIf no template_file is given, generated template will be written to the file miniccnx.conf in the current directory.\n'
                   'Type %prog -h for details)' )
 
         opts = OptionParser( description=desc, usage=usage )
@@ -2219,11 +3123,11 @@ class MiniEdit( Frame ):
         self.options, self.args = opts.parse_args()
         # We don't accept extra arguments after the options
         if self.args:
-	     if len(self.args) > 1:
-	     	opts.print_help()
-             	exit()
-	     else:
-	     	self.template_file=self.args[0]
+            if len(self.args) > 1:
+                opts.print_help()
+                exit()
+            else:
+                self.template_file=self.args[0]
 
     def setCustom( self, name, value ):
         "Set custom parameters for MininetRunner."
@@ -2362,87 +3266,87 @@ def miniEditImages():
             file='/usr/include/X11/bitmaps/left_ptr' ),
 
         'LegacyRouter': PhotoImage( data=r"""
-	    R0lGODlhMgAYAPcAAAEBAXZ8gQNAgL29vQNctjl/xVSa4j1dfCF+
-	    3QFq1DmL3wJMmAMzZZW11dnZ2SFrtyNdmTSO6gIZMUKa8gJVqEOH
-	    zR9Pf5W74wFjxgFx4jltn+np6Eyi+DuT6qKiohdtwwUPGWiq6ymF
-	    4LHH3Rh11CV81kKT5AMoUA9dq1ap/mV0gxdXlytRdR1ptRNPjTt9
-	    vwNgvwJZsX+69gsXJQFHjTtjizF0tvHx8VOm9z2V736Dhz2N3QM2
-	    acPZ70qe8gFo0HS19wVRnTiR6hMpP0eP1i6J5iNlqAtgtktjfQFu
-	    3TNxryx4xAMTIzOE1XqAh1uf5SWC4AcfNy1XgQJny93n8a2trRh3
-	    12Gt+VGm/AQIDTmByAF37QJasydzvxM/ayF3zhdLf8zLywFdu4i5
-	    6gFlyi2J4yV/1w8wUo2/8j+X8D2Q5Eee9jeR7Uia7DpeggFt2QNP
-	    m97e3jRong9bpziH2DuT7aipqQoVICmG45vI9R5720eT4Q1hs1er
-	    /yVVhwJJktPh70tfdbHP7Xev5xs5V7W1sz9jhz11rUVZcQ9WoCVV
-	    hQk7cRdtwWuw9QYOFyFHbSBnr0dznxtWkS18zKfP9wwcLAMHCwFF
-	    iS5UeqGtuRNNiwMfPS1hlQMtWRE5XzGM5yhxusLCwCljnwMdOFWh
-	    7cve8pG/7Tlxp+Tr8g9bpXF3f0lheStrrYu13QEXLS1ppTV3uUuR
-	    1RMjNTF3vU2X4TZupwRSolNne4nB+T+L2YGz4zJ/zYe99YGHjRdD
-	    cT95sx09XQldsgMLEwMrVc/X3yN3yQ1JhTRbggsdMQNfu9HPz6Wl
-	    pW2t7RctQ0GFyeHh4dvl8SBZklCb5kOO2kWR3Vmt/zdjkQIQHi90
-	    uvPz8wIVKBp42SV5zbfT7wtXpStVfwFWrBVvyTt3swFz5kGBv2+1
-	    /QlbrVFjdQM7d1+j54i67UmX51qn9i1vsy+D2TuR5zddhQsjOR1t
-	    u0GV6ghbsDVZf4+76RRisent8Xd9hQFBgwFNmwJLlcPDwwFr1z2T
-	    5yH5BAEAAAAALAAAAAAyABgABwj/AAEIHEiQYJY7Qwg9UsTplRIb
-	    ENuxEiXJgpcz8e5YKsixY8Essh7JcbbOBwcOa1JOmJAmTY4cHeoI
-	    abJrCShI0XyB8YRso0eOjoAdWpciBZajJ1GuWcnSZY46Ed5N8hPA
-	    TqEBoRB9gVJsxRlhPwHI0kDkVywcRpGe9LF0adOnMpt8CxDnxg1o
-	    9lphKoEACoIvmlxxvHOKVg0n/Tzku2WoVoU2J1P6WNkSrtwADuxC
-	    G/MOjwgRUEIjGG3FhaOBzaThiDSCil27G8Isc3LLjZwXsA6YYJmD
-	    jhTMmseoKQIFDx7RoxHo2abnwygAlUj1mV6tWjlelEpRwfd6gzI7
-	    VeJQ/2vZoVaDUqigqftXpH0R46H9Kl++zUo4JnKq9dGvv09RHFhc
-	    IUMe0NiFDyql0OJUHWywMc87TXRhhCRGiHAccvNZUR8JxpDTH38p
-	    9HEUFhxgMSAvjbBjQge8PSXEC6uo0IsHA6gAAShmgCbffNtsQwIJ
-	    ifhRHX/TpUUiSijlUk8AqgQixSwdNBjCa7CFoVggmEgCyRf01WcF
-	    CYvYUgB104k4YlK5HONEXXfpokYdMrXRAzMhmNINNNzB9p0T57Ag
-	    yZckpKKPGFNgw06ZWKR10jTw6MAmFWj4AJcQQkQQwSefvFeGCemM
-	    IQggeaJywSQ/wgHOAmJskQEfWqBlFBEH1P/QaGY3QOpDZXA2+A6m
-	    7hl3IRQKGDCIAj6iwE8yGKC6xbJv8IHNHgACQQybN2QiTi5NwdlB
-	    pZdiisd7vyanByOJ7CMGGRhgwE+qyy47DhnBPLDLEzLIAEQjBtCh
-	    RmVPNWgpr+Be+Nc9icARww9TkIEuDAsQ0O7DzGIQzD2QdDEJHTsI
-	    AROc3F7qWQncyHPPHN5QQAAG/vjzw8oKp8sPPxDH3O44/kwBQzLB
-	    xBCMOTzzHEMMBMBARgJvZJBBEm/4k0ACKydMBgwYoKNNEjJXbTXE
-	    42Q9jtFIp8z0Dy1jQMA1AGziz9VoW7310V0znYDTGMQgwUDXLDBO
-	    2nhvoTXbbyRk/XXL+pxWkAT8UJ331WsbnbTSK8MggDZhCTOMLQkc
-	    jvXeSPedAAw0nABWWARZIgEDfyTzxt15Z53BG1PEcEknrvgEelhZ
-	    MDHKCTwI8EcQFHBBAAFcgGPLHwLwcMIo12Qxu0ABAQA7
+        R0lGODlhMgAYAPcAAAEBAXZ8gQNAgL29vQNctjl/xVSa4j1dfCF+
+        3QFq1DmL3wJMmAMzZZW11dnZ2SFrtyNdmTSO6gIZMUKa8gJVqEOH
+        zR9Pf5W74wFjxgFx4jltn+np6Eyi+DuT6qKiohdtwwUPGWiq6ymF
+        4LHH3Rh11CV81kKT5AMoUA9dq1ap/mV0gxdXlytRdR1ptRNPjTt9
+        vwNgvwJZsX+69gsXJQFHjTtjizF0tvHx8VOm9z2V736Dhz2N3QM2
+        acPZ70qe8gFo0HS19wVRnTiR6hMpP0eP1i6J5iNlqAtgtktjfQFu
+        3TNxryx4xAMTIzOE1XqAh1uf5SWC4AcfNy1XgQJny93n8a2trRh3
+        12Gt+VGm/AQIDTmByAF37QJasydzvxM/ayF3zhdLf8zLywFdu4i5
+        6gFlyi2J4yV/1w8wUo2/8j+X8D2Q5Eee9jeR7Uia7DpeggFt2QNP
+        m97e3jRong9bpziH2DuT7aipqQoVICmG45vI9R5720eT4Q1hs1er
+        /yVVhwJJktPh70tfdbHP7Xev5xs5V7W1sz9jhz11rUVZcQ9WoCVV
+        hQk7cRdtwWuw9QYOFyFHbSBnr0dznxtWkS18zKfP9wwcLAMHCwFF
+        iS5UeqGtuRNNiwMfPS1hlQMtWRE5XzGM5yhxusLCwCljnwMdOFWh
+        7cve8pG/7Tlxp+Tr8g9bpXF3f0lheStrrYu13QEXLS1ppTV3uUuR
+        1RMjNTF3vU2X4TZupwRSolNne4nB+T+L2YGz4zJ/zYe99YGHjRdD
+        cT95sx09XQldsgMLEwMrVc/X3yN3yQ1JhTRbggsdMQNfu9HPz6Wl
+        pW2t7RctQ0GFyeHh4dvl8SBZklCb5kOO2kWR3Vmt/zdjkQIQHi90
+        uvPz8wIVKBp42SV5zbfT7wtXpStVfwFWrBVvyTt3swFz5kGBv2+1
+        /QlbrVFjdQM7d1+j54i67UmX51qn9i1vsy+D2TuR5zddhQsjOR1t
+        u0GV6ghbsDVZf4+76RRisent8Xd9hQFBgwFNmwJLlcPDwwFr1z2T
+        5yH5BAEAAAAALAAAAAAyABgABwj/AAEIHEiQYJY7Qwg9UsTplRIb
+        ENuxEiXJgpcz8e5YKsixY8Essh7JcbbOBwcOa1JOmJAmTY4cHeoI
+        abJrCShI0XyB8YRso0eOjoAdWpciBZajJ1GuWcnSZY46Ed5N8hPA
+        TqEBoRB9gVJsxRlhPwHI0kDkVywcRpGe9LF0adOnMpt8CxDnxg1o
+        9lphKoEACoIvmlxxvHOKVg0n/Tzku2WoVoU2J1P6WNkSrtwADuxC
+        G/MOjwgRUEIjGG3FhaOBzaThiDSCil27G8Isc3LLjZwXsA6YYJmD
+        jhTMmseoKQIFDx7RoxHo2abnwygAlUj1mV6tWjlelEpRwfd6gzI7
+        VeJQ/2vZoVaDUqigqftXpH0R46H9Kl++zUo4JnKq9dGvv09RHFhc
+        IUMe0NiFDyql0OJUHWywMc87TXRhhCRGiHAccvNZUR8JxpDTH38p
+        9HEUFhxgMSAvjbBjQge8PSXEC6uo0IsHA6gAAShmgCbffNtsQwIJ
+        ifhRHX/TpUUiSijlUk8AqgQixSwdNBjCa7CFoVggmEgCyRf01WcF
+        CYvYUgB104k4YlK5HONEXXfpokYdMrXRAzMhmNINNNzB9p0T57Ag
+        yZckpKKPGFNgw06ZWKR10jTw6MAmFWj4AJcQQkQQwSefvFeGCemM
+        IQggeaJywSQ/wgHOAmJskQEfWqBlFBEH1P/QaGY3QOpDZXA2+A6m
+        7hl3IRQKGDCIAj6iwE8yGKC6xbJv8IHNHgACQQybN2QiTi5NwdlB
+        pZdiisd7vyanByOJ7CMGGRhgwE+qyy47DhnBPLDLEzLIAEQjBtCh
+        RmVPNWgpr+Be+Nc9icARww9TkIEuDAsQ0O7DzGIQzD2QdDEJHTsI
+        AROc3F7qWQncyHPPHN5QQAAG/vjzw8oKp8sPPxDH3O44/kwBQzLB
+        xBCMOTzzHEMMBMBARgJvZJBBEm/4k0ACKydMBgwYoKNNEjJXbTXE
+        42Q9jtFIp8z0Dy1jQMA1AGziz9VoW7310V0znYDTGMQgwUDXLDBO
+        2nhvoTXbbyRk/XXL+pxWkAT8UJ331WsbnbTSK8MggDZhCTOMLQkc
+        jvXeSPedAAw0nABWWARZIgEDfyTzxt15Z53BG1PEcEknrvgEelhZ
+        MDHKCTwI8EcQFHBBAAFcgGPLHwLwcMIo12Qxu0ABAQA7
             """),
 
-	'Controller': PhotoImage( data=r"""
-            R0lGODlhMAAwAPcAAAEBAWfNAYWFhcfHx+3t6/f390lJUaWlpfPz
-	    8/Hx72lpaZGRke/v77m5uc0BAeHh4e/v7WNjY3t7e5eXlyMjI4mJ
-	    idPT0+3t7f///09PT7Ozs/X19fHx8ZWTk8HBwX9/fwAAAAAAAAAA
-	    AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-	    AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-	    AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-	    AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-	    AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
- 	    AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-	    AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-	    AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-	    AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-	    AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-	    AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-	    AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-	    AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-	    AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-	    AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-	    AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-            AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-	    ACH5BAEAAAAALAAAAAAwADAABwj/AAEIHEiwoMGDCBMqXMiwocOH
-	    ECNKnEixosWLGAEIeMCxo8ePHwVkBGABg8mTKFOmtDByAIYNMGPC
-	    RCCzQIENNzEMGOkBAwIKQIMKpYCgKAIHCDB4GNkAA4OnUJ9++CDh
-	    Q1QGFzA0GKkBA4GvYMOKBYtBA1cNaNOqXcuWq8q3b81m7Cqzbk2b
-	    MMu6/Tl0qFEEAZLKxdj1KlSqVA3rnet1rOOwiwmznUzZLdzLJgdf
-	    pIv3pmebN2Pm1GyRbocNp1PLNMDaAM3Im1/alQk4gO28pCt2RdCB
-	    t+/eRg8IP1AUdmmff5MrL56bYlcOvaP7Xo6Ag3HdGDho3869u/YE
-	    1507t+3AgLz58ujPMwg/sTBUCAzgy49PH0LW5u0xXFiwvz////5d
-	    cJ9bjxVIAHsSdUXAAgs2yOCDDn6FYEQaFGDgYxNCpEFfHHKIX4ID
-	    hCjiiCSS+CGFFlCmogYpcnVABTDGKGOMAlRQYwUHnKjhAjX2aOOP
-	    N8LImgAL6PiQBhLMqCSNAThQgQRGOqRBBD1WaaOVAggnQARRNqRB
-	    BxmEKeaYZIrZQZcMKbDiigqM5OabcMYp55x01ilnQAA7
+    'Controller': PhotoImage( data=r"""
+        R0lGODlhMAAwAPcAAAEBAWfNAYWFhcfHx+3t6/f390lJUaWlpfPz
+        8/Hx72lpaZGRke/v77m5uc0BAeHh4e/v7WNjY3t7e5eXlyMjI4mJ
+        idPT0+3t7f///09PT7Ozs/X19fHx8ZWTk8HBwX9/fwAAAAAAAAAA
+        AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+        AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+        AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+        AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+        AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+         AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+        AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+        AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+        AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+        AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+        AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+        AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+        AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+        AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+        AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+        AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+        AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+        ACH5BAEAAAAALAAAAAAwADAABwj/AAEIHEiwoMGDCBMqXMiwocOH
+        ECNKnEixosWLGAEIeMCxo8ePHwVkBGABg8mTKFOmtDByAIYNMGPC
+        RCCzQIENNzEMGOkBAwIKQIMKpYCgKAIHCDB4GNkAA4OnUJ9++CDh
+        Q1QGFzA0GKkBA4GvYMOKBYtBA1cNaNOqXcuWq8q3b81m7Cqzbk2b
+        MMu6/Tl0qFEEAZLKxdj1KlSqVA3rnet1rOOwiwmznUzZLdzLJgdf
+        pIv3pmebN2Pm1GyRbocNp1PLNMDaAM3Im1/alQk4gO28pCt2RdCB
+        t+/eRg8IP1AUdmmff5MrL56bYlcOvaP7Xo6Ag3HdGDho3869u/YE
+        1507t+3AgLz58ujPMwg/sTBUCAzgy49PH0LW5u0xXFiwvz////5d
+        cJ9bjxVIAHsSdUXAAgs2yOCDDn6FYEQaFGDgYxNCpEFfHHKIX4ID
+        hCjiiCSS+CGFFlCmogYpcnVABTDGKGOMAlRQYwUHnKjhAjX2aOOP
+        N8LImgAL6PiQBhLMqCSNAThQgQRGOqRBBD1WaaOVAggnQARRNqRB
+        BxmEKeaYZIrZQZcMKbDiigqM5OabcMYp55x01ilnQAA7
             """),
 
-        'Host': PhotoImage( data=r"""
+    'Host': PhotoImage( data=r"""
             R0lGODlhIAAYAPcAMf//////zP//mf//Zv//M///AP/M///MzP/M
             mf/MZv/MM//MAP+Z//+ZzP+Zmf+ZZv+ZM/+ZAP9m//9mzP9mmf9m
             Zv9mM/9mAP8z//8zzP8zmf8zZv8zM/8zAP8A//8AzP8Amf8AZv8A
@@ -2470,105 +3374,105 @@ def miniEditImages():
             C8cSBBAQADs=
         """ ),
 
-	'Switch': PhotoImage( data=r"""
-	    R0lGODlhLgAgAPcAAB2ZxGq61imex4zH3RWWwmK41tzd3vn9/jCi
-	    yfX7/Q6SwFay0gBlmtnZ2snJyr+2tAuMu6rY6D6kyfHx8XO/2Uqs
-	    zjmly6DU5uXz+JLN4uz3+kSrzlKx0ZeZm2K21BuYw67a6QB9r+Xl
-	    5rW2uHW61On1+UGpzbrf6xiXwny9166vsMLCwgBdlAmHt8TFxgBw
-	    pNTs9C2hyO7t7ZnR5L/Bw0yv0NXV1gBimKGjpABtoQBuoqKkpiaU
-	    vqWmqHbB2/j4+Pf39729vgB/sN7w9obH3hSMugCAsonJ4M/q8wBg
-	    lgB6rCCaxLO0tX7C2wBqniGMuABzpuPl5f3+/v39/fr6+r7i7vP6
-	    /ABonV621LLc6zWkyrq6uq6wskGlyUaszp6gohmYw8HDxKaoqn3E
-	    3LGztWGuzcnLzKmrrOnp6gB1qCaex1q001ewz+Dg4QB3qrCxstHS
-	    09LR0dHR0s7Oz8zNzsfIyQaJuQB0pozL4YzI3re4uAGFtYDG3hOU
-	    wb+/wQB5rOvr6wB2qdju9TWfxgBpniOcxeLj48vn8dvc3VKuzwB2
-	    qp6fos/Q0aXV6D+jxwB7rsXHyLu8vb27vCScxSGZwxyZxH3A2RuU
-	    v0+uzz+ozCedxgCDtABnnABroKutr/7+/n2/2LTd6wBvo9bX2OLo
-	    6lGv0C6dxS6avjmmzLTR2uzr6m651RuXw4jF3CqfxySaxSadyAuR
-	    v9bd4cPExRiMuDKjyUWevNPS0sXl8BeYxKytr8G/wABypXvC23vD
-	    3O73+3vE3cvU2PH5+7S1t7q7vCGVwO/v8JfM3zymyyyZwrWys+Hy
-	    90KixK6qqg+TwBKXxMvMzaWtsK7U4jemzLXEygBxpW++2aCho97Z
-	    18bP0/T09fX29vb19ViuzdDR0crf51qz01y00ujo6Onq6hCDs2Gp
-	    w3i71CqWv3S71nO92M/h52m207bJ0AN6rPPz9Nrh5Nvo7K/b6oTI
-	    37Td7ABqneHi4yScxo/M4RiWwRqVwcro8n3B2lGoylStzszMzAAA
-	    ACH5BAEAAP8ALAAAAAAuACAABwj/AP8JHEjw3wEkEY74WOjrQhUN
-	    BSNKnCjRSoYKCOwJcKWpEAACBFBRGEKxZMkDjRAg2OBlQyYLWhDE
-	    cOWxDwofv0zqHIhhDYIFC2p4MYFMS62ZaiYVWlJJAYIqO00KMlEj
-	    ABYOQokaRbp0CYBKffpE iDpxSKYC1gqswToUmYVaCFyp6Qrgwwc
-	    CscaSJZhgQYBeAdRyqFBhgwWkGyct8WoXRZ8Ph/YOxMOBCIUAHsB
-	    xwGQBAII1YwpMI5Brcd0PKFA4Q2ZFMgYteZqkwxyu1KQNJzQc+Cd
-	    FCrxypyqdRoEPX6x7ki/n2TfbAxtNRHYTVCWpWTRbuRoX7yMgZ9Q
-	    SFQa0/7LU/BXygjIWXVOBTR2sxp7BxGpENgKbY+PRreqyIOKnOh0
-	    M445AjTjDCgrPSBNFKt9w8wMVU5g0Bg8kDAAKOutQAkNEQNBwDRA
-	    EeVEcAV6w84AyKowQSRhmzNGAASIAYow2IP6DySPk8ANKCv1wINE
-	    2cpjxCUEgOIOPAKicQMMbKnhyhhg97HDNF4vsIEYkNkzwjwSP/PH
-	    IE2VIgIdEnxjAiBwNGIKGDKS8I0sw2VAzApNOQimGLlyMAIkDw2y
-	    hZTF/KKGElxCEMtEPBtDhACQurLDCLkFIsoUeZLyRpx8OmEGHN3A
-	    EcU0HkFAhUDFulDroJvOU5M44iDjgDTQO1P/hzRw2IFJPGw3AAY0
-	    LI/SAwxc7jEKQI2mkEUipRoxp0g821AMIGlG0McockMzihx5c1Lk
-	    DDmSgUVAiafACRbGPVKDTFG3MYUYdLoThRxDE6DEMGUww8eQONGw
-	    TER9piFINFOPasaFJVIjTwC1xzOGPA3HUKoIMDTwJR4QRgdBOJzq
-	    8UM0Lj5QihU5ZdGMOCSSYUwYzAwwkDhNtUKTBOZ10koMOoohihDw
-	    mHZKPEDwb4fMe9An0g5Yl+SDKFTHnkMMLLQAjXUTxUCLEIyH0bIQ
-	    AwuxVQhEMcEIIIUmHUEsWGCQgxQEaIFGAHV0+QnUIIWwyg2T/3MP
-	    LDQwwcAUhTjiswYsQl1SAxQKmbBJCIMe6ISjVmXwsWQKJEJJE3l1
-	    /TY8O4wZyh8ZQ3IF4qX9cggTdAmEwCAMs3IB311fsDfbMGv97BxS
-	    BQBAP6QMN0QUhLCSRhOp5e923zDpk/EIaRdyO+0C/eHBHEiz0vjr
-	    rfMfciSKD4LJ8RBEk88IN0ff+O/CEVEPLGK1tH1ECM7DxRDWdcML
-	    JFTpUQ44jfCyjvlShZNDE/0QAgT6ypr6AAAA7
+    'Switch': PhotoImage( data=r"""
+        R0lGODlhLgAgAPcAAB2ZxGq61imex4zH3RWWwmK41tzd3vn9/jCi
+        yfX7/Q6SwFay0gBlmtnZ2snJyr+2tAuMu6rY6D6kyfHx8XO/2Uqs
+        zjmly6DU5uXz+JLN4uz3+kSrzlKx0ZeZm2K21BuYw67a6QB9r+Xl
+        5rW2uHW61On1+UGpzbrf6xiXwny9166vsMLCwgBdlAmHt8TFxgBw
+        pNTs9C2hyO7t7ZnR5L/Bw0yv0NXV1gBimKGjpABtoQBuoqKkpiaU
+        vqWmqHbB2/j4+Pf39729vgB/sN7w9obH3hSMugCAsonJ4M/q8wBg
+        lgB6rCCaxLO0tX7C2wBqniGMuABzpuPl5f3+/v39/fr6+r7i7vP6
+        /ABonV621LLc6zWkyrq6uq6wskGlyUaszp6gohmYw8HDxKaoqn3E
+        3LGztWGuzcnLzKmrrOnp6gB1qCaex1q001ewz+Dg4QB3qrCxstHS
+        09LR0dHR0s7Oz8zNzsfIyQaJuQB0pozL4YzI3re4uAGFtYDG3hOU
+        wb+/wQB5rOvr6wB2qdju9TWfxgBpniOcxeLj48vn8dvc3VKuzwB2
+        qp6fos/Q0aXV6D+jxwB7rsXHyLu8vb27vCScxSGZwxyZxH3A2RuU
+        v0+uzz+ozCedxgCDtABnnABroKutr/7+/n2/2LTd6wBvo9bX2OLo
+        6lGv0C6dxS6avjmmzLTR2uzr6m651RuXw4jF3CqfxySaxSadyAuR
+        v9bd4cPExRiMuDKjyUWevNPS0sXl8BeYxKytr8G/wABypXvC23vD
+        3O73+3vE3cvU2PH5+7S1t7q7vCGVwO/v8JfM3zymyyyZwrWys+Hy
+        90KixK6qqg+TwBKXxMvMzaWtsK7U4jemzLXEygBxpW++2aCho97Z
+        18bP0/T09fX29vb19ViuzdDR0crf51qz01y00ujo6Onq6hCDs2Gp
+        w3i71CqWv3S71nO92M/h52m207bJ0AN6rPPz9Nrh5Nvo7K/b6oTI
+        37Td7ABqneHi4yScxo/M4RiWwRqVwcro8n3B2lGoylStzszMzAAA
+        ACH5BAEAAP8ALAAAAAAuACAABwj/AP8JHEjw3wEkEY74WOjrQhUN
+        BSNKnCjRSoYKCOwJcKWpEAACBFBRGEKxZMkDjRAg2OBlQyYLWhDE
+        cOWxDwofv0zqHIhhDYIFC2p4MYFMS62ZaiYVWlJJAYIqO00KMlEj
+        ABYOQokaRbp0CYBKffpE iDpxSKYC1gqswToUmYVaCFyp6Qrgwwc
+        CscaSJZhgQYBeAdRyqFBhgwWkGyct8WoXRZ8Ph/YOxMOBCIUAHsB
+        xwGQBAII1YwpMI5Brcd0PKFA4Q2ZFMgYteZqkwxyu1KQNJzQc+Cd
+        FCrxypyqdRoEPX6x7ki/n2TfbAxtNRHYTVCWpWTRbuRoX7yMgZ9Q
+        SFQa0/7LU/BXygjIWXVOBTR2sxp7BxGpENgKbY+PRreqyIOKnOh0
+        M445AjTjDCgrPSBNFKt9w8wMVU5g0Bg8kDAAKOutQAkNEQNBwDRA
+        EeVEcAV6w84AyKowQSRhmzNGAASIAYow2IP6DySPk8ANKCv1wINE
+        2cpjxCUEgOIOPAKicQMMbKnhyhhg97HDNF4vsIEYkNkzwjwSP/PH
+        IE2VIgIdEnxjAiBwNGIKGDKS8I0sw2VAzApNOQimGLlyMAIkDw2y
+        hZTF/KKGElxCEMtEPBtDhACQurLDCLkFIsoUeZLyRpx8OmEGHN3A
+        EcU0HkFAhUDFulDroJvOU5M44iDjgDTQO1P/hzRw2IFJPGw3AAY0
+        LI/SAwxc7jEKQI2mkEUipRoxp0g821AMIGlG0McockMzihx5c1Lk
+        DDmSgUVAiafACRbGPVKDTFG3MYUYdLoThRxDE6DEMGUww8eQONGw
+        TER9piFINFOPasaFJVIjTwC1xzOGPA3HUKoIMDTwJR4QRgdBOJzq
+        8UM0Lj5QihU5ZdGMOCSSYUwYzAwwkDhNtUKTBOZ10koMOoohihDw
+        mHZKPEDwb4fMe9An0g5Yl+SDKFTHnkMMLLQAjXUTxUCLEIyH0bIQ
+        AwuxVQhEMcEIIIUmHUEsWGCQgxQEaIFGAHV0+QnUIIWwyg2T/3MP
+        LDQwwcAUhTjiswYsQl1SAxQKmbBJCIMe6ISjVmXwsWQKJEJJE3l1
+        /TY8O4wZyh8ZQ3IF4qX9cggTdAmEwCAMs3IB311fsDfbMGv97BxS
+        BQBAP6QMN0QUhLCSRhOp5e923zDpk/EIaRdyO+0C/eHBHEiz0vjr
+        rfMfciSKD4LJ8RBEk88IN0ff+O/CEVEPLGK1tH1ECM7DxRDWdcML
+        JFTpUQ44jfCyjvlShZNDE/0QAgT6ypr6AAAA7
             """),
 
-	'LegacySwitch': PhotoImage( data=r"""
-	    R0lGODlhMgAYAPcAAAEBAXmDjbe4uAE5cjF7xwFWq2Sa0S9biSlr
-	    rdTW1k2Ly02a5xUvSQFHjmep6bfI2Q5SlQIYLwFfvj6M3Jaan8fH
-	    yDuFzwFp0Vah60uU3AEiRhFgrgFRogFr10N9uTFrpytHYQFMmGWt
-	    9wIwX+bm5kaT4gtFgR1cnJPF9yt80CF0yAIMGHmp2c/P0AEoUb/P
-	    4Fei7qK4zgpLjgFkyQlft1mf5jKD1WWJrQ86ZwFAgBhYmVOa4MPV
-	    52uv8y+A0iR3ywFbtUyX5ECI0Q1UmwIcOUGQ3RBXoQI0aRJbpr3B
-	    xVeJvQUJDafH5wIlS2aq7xBmv52lr7fH12el5Wml3097ph1ru7vM
-	    3HCz91Ke6lid40KQ4GSQvgQGClFnfwVJjszMzVCX3hljrdPT1AFL
-	    lBRnutPf6yd5zjeI2QE9eRBdrBNVl+3v70mV4ydflwMVKwErVlul
-	    8AFChTGB1QE3bsTFxQImTVmAp0FjiUSM1k+b6QQvWQ1SlxMgLgFi
-	    xEqU3xJhsgFTpn2Xs5OluZ+1yz1Xb6HN+Td9wy1zuYClykV5r0x2
-	    oeDh4qmvt8LDwxhuxRlLfyRioo2124mft9bi71mDr7fT79nl8Z2h
-	    pQs9b7vN4QMQIOPj5XOPrU2Jx32z6xtvwzeBywFFikFnjwcPFa29
-	    yxJjuFmPxQFv3qGxwRc/Z8vb6wsRGBNqwqmpqTdvqQIbNQFPngMz
-	    ZAEfP0mQ13mHlQFYsAFnznOXu2mPtQxjvQ1Vn4Ot1+/x8my0/CJg
-	    nxNNh8DT5CdJaWyx+AELFWmt8QxPkxBZpwMFB015pgFduGCNuyx7
-	    zdnZ2WKm6h1xyOPp8aW70QtPkUmM0LrCyr/FyztljwFPm0OJzwFn
-	    y7/L1xFjswE/e12i50iR2VR8o2Gf3xszS2eTvz2BxSlloQdJiwMH
-	    DzF3u7bJ3T2I1WCp8+Xt80FokQFJklef6mORw2ap7SJ1y77Q47nN
-	    3wFfu1Kb5cXJyxdhrdDR0wlNkTSF11Oa4yp4yQEuW0WQ3QIDBQI7
-	    dSH5BAEAAAAALAAAAAAyABgABwj/AAEIHDjKF6SDvhImPMHwhA6H
-	    OiLqUENRDYSLEIplxBcNHz4Z5GTI8BLKS5OBA1Ply2fDhxwfPlLI
-	    TGFmmRkzP+DlVKHCmU9nnz45csSqKKsn9gileZKrVC4aRFACOGZu
-	    5UobNuRohRkzhc2b+36oqCaqrFmzZEV1ERBg3BOmMl5JZTBhwhm7
-	    ZyycYZnvJdeuNl21qkCHTiPDhxspTtKoQgUKCJ6wehMV5QctWupe
-	    o6TkjOd8e1lmdQkTGbTTMaDFiDGINeskX6YhEicUiQa5A/kUKaFF
-	    wQ0oXzjZ8Tbcm3HjirwpMtTSgg9QMJf5WEZ9375AiED19ImpSQSU
-	    B4Kw/8HFSMyiRWJaqG/xhf2X91+oCbmq1e/MFD/2EcApVkWVJhp8
-	    J9AqsywQxDfAbLJJPAy+kMkL8shjxTkUnhOJZ5+JVp8cKfhwxwdf
-	    4fQLgG4MFAwWKOZRAxM81EAPPQvoE0QQfrDhx4399OMBMjz2yCMV
-	    ivCoCAWXKLKMTPvoUYcsKwi0RCcwYCAlFjU0A6OBM4pXAhsl8FYE
-	    LYWFWZhiZCbRQgIC2AGTLy408coxAoEDx5wwtGPALTVg0E4NKC7g
-	    p4FsBKoAKi8U+oIVmVih6DnZPMBMAlGwIARWOLiggSYC+ZNIOulw
-	    Y4AkSZCyxaikbqHMqaeaIp4+rAaxQxBg2P+IozuRzvLZIS4syYVA
-	    fMAhwhSC1EPCGoskIIYY9yS7Hny75OFnEIAGyiVvWkjjRxF11fXI
-	    G3WUKNA6wghDTCW88PKMJZOkm24Z7LarSjPtoIjFn1lKyyVmmBVh
-	    wRtvaDDMgFL0Eu4VhaiDwhXCXNFDD8QQw7ATEDsBw8RSxotFHs7C
-	    KJ60XWrRBj91EOGPQCA48c7J7zTjSTPctOzynjVkkYU+O9S8Axg4
-	    Z6BzBt30003Ps+AhNB5C4PCGC5gKJMMTZJBRytOl/CH1HxvQkMbV
-	    VxujtdZGGKGL17rsEfYQe+xRzNnFcGQCv7LsKlAtp8R9Sgd0032B
-	    LXjPoPcMffTd3YcEgAMOxOBA1GJ4AYgXAMjiHDTgggveCgRI3Rfc
-	    nffefgcOeDKEG3444osDwgEspMNiTQhx5FoOShxcrrfff0uQjOyc
-	    D+554qFzMHrpp4cwBju/5+CmVNbArnntndeCO+O689777+w0IH0o
-	    1P/TRJMohRA4EJwn47nyiocOSOmkn/57COxE3wD11Mfhfg45zCGy
-	    VF4Ufvvyze8ewv5jQK9++6FwXxzglwM0GPAfR8AeSo4gwAHCbxsQ
-	    NCAa/kHBAVhwAHPI4BE2eIRYeHAEIBwBP0Y4Qn41YWRSCQgAOw==
+    'LegacySwitch': PhotoImage( data=r"""
+        R0lGODlhMgAYAPcAAAEBAXmDjbe4uAE5cjF7xwFWq2Sa0S9biSlr
+        rdTW1k2Ly02a5xUvSQFHjmep6bfI2Q5SlQIYLwFfvj6M3Jaan8fH
+        yDuFzwFp0Vah60uU3AEiRhFgrgFRogFr10N9uTFrpytHYQFMmGWt
+        9wIwX+bm5kaT4gtFgR1cnJPF9yt80CF0yAIMGHmp2c/P0AEoUb/P
+        4Fei7qK4zgpLjgFkyQlft1mf5jKD1WWJrQ86ZwFAgBhYmVOa4MPV
+        52uv8y+A0iR3ywFbtUyX5ECI0Q1UmwIcOUGQ3RBXoQI0aRJbpr3B
+        xVeJvQUJDafH5wIlS2aq7xBmv52lr7fH12el5Wml3097ph1ru7vM
+        3HCz91Ke6lid40KQ4GSQvgQGClFnfwVJjszMzVCX3hljrdPT1AFL
+        lBRnutPf6yd5zjeI2QE9eRBdrBNVl+3v70mV4ydflwMVKwErVlul
+        8AFChTGB1QE3bsTFxQImTVmAp0FjiUSM1k+b6QQvWQ1SlxMgLgFi
+        xEqU3xJhsgFTpn2Xs5OluZ+1yz1Xb6HN+Td9wy1zuYClykV5r0x2
+        oeDh4qmvt8LDwxhuxRlLfyRioo2124mft9bi71mDr7fT79nl8Z2h
+        pQs9b7vN4QMQIOPj5XOPrU2Jx32z6xtvwzeBywFFikFnjwcPFa29
+        yxJjuFmPxQFv3qGxwRc/Z8vb6wsRGBNqwqmpqTdvqQIbNQFPngMz
+        ZAEfP0mQ13mHlQFYsAFnznOXu2mPtQxjvQ1Vn4Ot1+/x8my0/CJg
+        nxNNh8DT5CdJaWyx+AELFWmt8QxPkxBZpwMFB015pgFduGCNuyx7
+        zdnZ2WKm6h1xyOPp8aW70QtPkUmM0LrCyr/FyztljwFPm0OJzwFn
+        y7/L1xFjswE/e12i50iR2VR8o2Gf3xszS2eTvz2BxSlloQdJiwMH
+        DzF3u7bJ3T2I1WCp8+Xt80FokQFJklef6mORw2ap7SJ1y77Q47nN
+        3wFfu1Kb5cXJyxdhrdDR0wlNkTSF11Oa4yp4yQEuW0WQ3QIDBQI7
+        dSH5BAEAAAAALAAAAAAyABgABwj/AAEIHDjKF6SDvhImPMHwhA6H
+        OiLqUENRDYSLEIplxBcNHz4Z5GTI8BLKS5OBA1Ply2fDhxwfPlLI
+        TGFmmRkzP+DlVKHCmU9nnz45csSqKKsn9gileZKrVC4aRFACOGZu
+        5UobNuRohRkzhc2b+36oqCaqrFmzZEV1ERBg3BOmMl5JZTBhwhm7
+        ZyycYZnvJdeuNl21qkCHTiPDhxspTtKoQgUKCJ6wehMV5QctWupe
+        o6TkjOd8e1lmdQkTGbTTMaDFiDGINeskX6YhEicUiQa5A/kUKaFF
+        wQ0oXzjZ8Tbcm3HjirwpMtTSgg9QMJf5WEZ9375AiED19ImpSQSU
+        B4Kw/8HFSMyiRWJaqG/xhf2X91+oCbmq1e/MFD/2EcApVkWVJhp8
+        J9AqsywQxDfAbLJJPAy+kMkL8shjxTkUnhOJZ5+JVp8cKfhwxwdf
+        4fQLgG4MFAwWKOZRAxM81EAPPQvoE0QQfrDhx4399OMBMjz2yCMV
+        ivCoCAWXKLKMTPvoUYcsKwi0RCcwYCAlFjU0A6OBM4pXAhsl8FYE
+        LYWFWZhiZCbRQgIC2AGTLy408coxAoEDx5wwtGPALTVg0E4NKC7g
+        p4FsBKoAKi8U+oIVmVih6DnZPMBMAlGwIARWOLiggSYC+ZNIOulw
+        Y4AkSZCyxaikbqHMqaeaIp4+rAaxQxBg2P+IozuRzvLZIS4syYVA
+        fMAhwhSC1EPCGoskIIYY9yS7Hny75OFnEIAGyiVvWkjjRxF11fXI
+        G3WUKNA6wghDTCW88PKMJZOkm24Z7LarSjPtoIjFn1lKyyVmmBVh
+        wRtvaDDMgFL0Eu4VhaiDwhXCXNFDD8QQw7ATEDsBw8RSxotFHs7C
+        KJ60XWrRBj91EOGPQCA48c7J7zTjSTPctOzynjVkkYU+O9S8Axg4
+        Z6BzBt30003Ps+AhNB5C4PCGC5gKJMMTZJBRytOl/CH1HxvQkMbV
+        VxujtdZGGKGL17rsEfYQe+xRzNnFcGQCv7LsKlAtp8R9Sgd0032B
+        LXjPoPcMffTd3YcEgAMOxOBA1GJ4AYgXAMjiHDTgggveCgRI3Rfc
+        nffefgcOeDKEG3444osDwgEspMNiTQhx5FoOShxcrrfff0uQjOyc
+        D+554qFzMHrpp4cwBju/5+CmVNbArnntndeCO+O689777+w0IH0o
+        1P/TRJMohRA4EJwn47nyiocOSOmkn/57COxE3wD11Mfhfg45zCGy
+        VF4Ufvvyze8ewv5jQK9++6FwXxzglwM0GPAfR8AeSo4gwAHCbxsQ
+        NCAa/kHBAVhwAHPI4BE2eIRYeHAEIBwBP0Y4Qn41YWRSCQgAOw==
             """),
 
-	'OldSwitch': PhotoImage( data=r"""
-            R0lGODlhIAAYAPcAMf//////zP//mf//Zv//M///AP/M///MzP/M
+    'OldSwitch': PhotoImage( data=r"""
+        R0lGODlhIAAYAPcAMf//////zP//mf//Zv//M///AP/M///MzP/M
             mf/MZv/MM//MAP+Z//+ZzP+Zmf+ZZv+ZM/+ZAP9m//9mzP9mmf9m
             Zv9mM/9mAP8z//8zzP8zmf8zZv8zM/8zAP8A//8AzP8Amf8AZv8A
             M/8AAMz//8z/zMz/mcz/Zsz/M8z/AMzM/8zMzMzMmczMZszMM8zM
@@ -2645,9 +3549,5 @@ if __name__ == '__main__':
     """ import topology if specified """
     app.parseArgs()
     app.importTopo()
-
-    #global isHostPopup
-    #global isRouterPopup
-    #global isLinkPopup
 
     app.mainloop()

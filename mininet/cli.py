@@ -36,6 +36,15 @@ from mininet.log import info, output, error
 from mininet.term import makeTerms
 from mininet.util import quietRun, isShellBuiltin, dumpNodeConnections
 from mininet.node import CCNHost
+from sources.metrics import DBManager
+
+#backwards compatible library fo InfluxDB 0.8:
+#from influxdb.influxdb08 import InfluxDBClient
+
+#for InfluxDB 0.9 and above:
+from influxdb import InfluxDBClient
+
+import pdb
 
 class CLI( Cmd ):
     "Simple command-line interface to talk to nodes."
@@ -56,8 +65,12 @@ class CLI( Cmd ):
         self.inPoller = poll()
         self.inPoller.register( stdin )
         self.inputFile = script
+
+        self.dbmanager = DBManager()
+
         Cmd.__init__( self )
         info( '*** Starting CLI:\n' )
+
         if self.inputFile:
             self.do_source( self.inputFile )
             return
@@ -105,6 +118,7 @@ class CLI( Cmd ):
 
     def do_help( self, line ):
         "Describe available CLI commands."
+	#pdb.set_trace()
         Cmd.do_help( self, line )
         if line is '':
             output( self.helpStr )
@@ -300,10 +314,117 @@ class CLI( Cmd ):
 
     def do_time( self, line ):
         "Measure time taken for any command in Mininet."
+
         start = time.time()
         self.onecmd(line)
         elapsed = time.time() - start
         self.stdout.write("*** Elapsed time: %0.6f secs\n" % elapsed)
+
+    def do_dropdb (self, line):
+        "Drops specified database from InfluxDB and all its data."
+
+        args = line.split()
+        if len(args) != 1:
+            error( 'usage: deletedb [dbname]\n')
+            return
+        dbname = args[0].strip('()[]{}<>')
+        self.dbmanager.dropDatabase(dbname)
+        if(dbname is 'miniccnx_data'):
+            info('Note that your experiment might not be writting collected data into the default database now!\n')
+
+    def do_createdb (self, line):
+        "Creates a new database into InfluxDB."
+
+        args = line.split()
+        if len(args) != 1:
+            error( 'usage: createdb [dbname]\n')
+            return
+
+        self.dbmanager.createDatabase(args[0].strip('()[]{}<>'))
+
+    def do_dropalldb (self, line):
+        "Drops all databases in InfluxDB and all their data."
+
+        args = line.split()
+        if len(args) > 0:
+            error( 'usage: dropalldb \n')
+            return
+
+        self.dbmanager.dropAllDatabases()
+        info('Note that your experiment might not be writting collected data into any database now!\n')
+
+    def do_lookfordb (self, line):
+        "Checks if specified database exists or not."
+
+        args = line.split()
+        if len(args) != 1:
+            error( 'usage: lookfordb [dbname]\n')
+            return
+        dbname=args[0].strip('()[]{}<>')
+        if(self.dbmanager.lookForDatabase(dbname)):
+            info('Database %s exists.\n' % dbname)
+        else:
+            info("Database %s does not exist. Create it using 'createdb %s' command. \n" % (dbname,dbname))
+
+    def do_listdb (self, line):
+        "Lists all existing databases in the current context."
+
+        args = line.split()
+        if len(args) > 0:
+            error( 'usage: listdb\n')
+            return
+
+        dblist = self.dbmanager.listDatabases()
+        
+        info('Existing databases are: ')
+        for db in dblist:
+            info('%s ' % db)
+        info('\n')
+
+    #def do_listusers (self, line):
+    #    "Lists all existing users in the current context."
+    #    pdb.set_trace()
+    #    args = line.split()
+    #    if len(args) > 0:
+    #        error( 'usage: listusers\n')
+    #        return
+    #
+    #    userslist = self.dbmanager.listUsers()
+    #    info('Existing users are: ')
+    #    for user in userslist:
+    #        info('%s ' % user)
+    #    info('\n')
+
+    def do_listseries (self, line):
+        "Lists all existing series in the database."
+        pdb.set_trace()
+        args = line.split()
+        if len(args) != 1:
+            error( 'usage: listseries [dbname]\n')
+            return
+
+        dbname=args[0].strip('()[]{}<>')
+        serieslist = self.dbmanager.listSeries(dbname)
+
+        info('Existing series in %s are: ' %dbname)
+        for serie in serieslist:
+            info('%s ' % serie)
+        info('\n')
+
+    def do_querydb (self, line):
+        "Queries the database and return the results."
+        pdb.set_trace()
+        args = line.split(None, 1)
+        if len(args) != 2 :
+            error( 'usage: query [database] <query>\n')
+            return
+        dbname=args[0].strip('()[]{}<>')
+        query=args[1].strip("\" ' ")
+
+        result = self.dbmanager.queryDB(query, db=dbname)
+
+        for entry in result:
+            print entry
 
     def default( self, line ):
         """Called on an input line when the command prefix is not recognized.

@@ -50,12 +50,13 @@ class Topo(object):
            name: host name
            opts: host options
            returns: host name"""
-	#pdb.set_trace()
+	    #pdb.set_trace()
         if not opts:
-	 if self.hopts:
-            opts = self.hopts
-	 elif self.ropts:
-	    opts = self.ropts
+            if self.hopts:
+                opts = self.hopts
+            elif self.ropts:
+                opts = self.ropts
+
         return self.addNode(name, **opts)
 
     def addSwitch(self, name, **opts):
