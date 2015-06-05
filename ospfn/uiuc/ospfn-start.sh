@@ -1,3 +1,1 @@
-#!/bin/bash
-ospfn -f ospfn.conf -d
-sleep 1
+../ospfn-start.sh
