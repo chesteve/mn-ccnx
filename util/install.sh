@@ -98,13 +98,24 @@ OVS_TAG=v$OVS_RELEASE
 
 OF13_SWITCH_REV=${OF13_SWITCH_REV:-""}
 
+function install_ccnping () {
+	echo "Installing ccnping"
+	CCNPING_DIR=./ccnping
+	sudo git clone https://github.com/NDN-Routing/ccnping
+	pushd "$CCNPING_DIR"
+	sudo ./configure
+	sudo make
+	sudo make install
+	popd
+}
+
 function install_ccnx () {
     echo "Install CCNx suite if necessary"
     CCNX_DIR=./ccnx
     CCNX_LOC=`which ccndstatus`
+    prompt=;
     if [ "$CCNX_LOC" = "" ]; then
 	    echo "CCNx was not detected in the current system."
-	    prompt=;
 	    while [ -z $prompt ];
 	        do read -p "Do you wish to install it now? [y/n]?" choice;
       	    case "$choice" in
@@ -117,7 +128,7 @@ function install_ccnx () {
     fi
 
     if [ "$prompt" ]; then
-        if [ ! -d "$CCNX_DIR" ]; then
+            if [ ! -d "$CCNX_DIR" ]; then
 		    sudo mkdir "$CCNX_DIR"
 	    else
 		    echo "Directory $CCNX_DIR already exists. Aborting."
@@ -128,8 +139,8 @@ function install_ccnx () {
 		    vlc wireshark openjdk-7-jdk ant git-core gcc \
 		    athena-jot python-dev make wget
 	    pushd "$CCNX_DIR"
-	    wget http://www.ccnx.org/releases/ccnx-0.8.2.tar.gz
-	    tar -xvzf ccnx-0.8.2.tar.gz
+	    sudo wget http://www.ccnx.org/releases/ccnx-0.8.2.tar.gz
+	    sudo tar -xvzf ccnx-0.8.2.tar.gz
 	    pushd ccnx-0.8.2
 	    sudo ./configure
 	    sudo make
@@ -145,8 +156,8 @@ function install_ccnx () {
 function install_influxDB () {
     echo "Install InfluxDB for data collection."
     INFLUX_DIR=./influxDB
-    ARCH = `uname -m`
-    if [ "$ARCH" = "x86_64" ]; then
+
+    if [ "$ARCH" = "x86_64" -o "$ARCH" = "amd64" ]; then
 	    if [ ! -d "$INFLUX_DIR" ]; then
                 sudo mkdir ./influxDB
 	    else
@@ -155,19 +166,21 @@ function install_influxDB () {
           	fi
 
 	    pushd "$INFLUX_DIR"
-	    wget http://get.influxdb.org/influxdb_0.9.0-rc31_amd64.deb
+	    sudo wget http://get.influxdb.org/influxdb_0.9.0-rc31_amd64.deb
 	    sudo dpkg -i influxdb_0.9.0-rc31_amd64.deb
+	    sudo wget https://bootstrap.pypa.io/get-pip.py 
 	    sudo python get-pip.py
 	    sudo pip install influxdb
+	    sudo pip install --upgrade influxdb
 	    popd
 
     else
-	    echo "Architecture not yet supported by the latest version of InfluxDB"
+	    echo "Architecture $ARCH not yet supported by the latest version of InfluxDB"
 	    exit 1
     fi
 
     echo "InfluxDB installed successfully. Starting daemon..."
-    sudo /etc/init.d/influxdb start
+    sudo /etc/init.d/influxdb restart
 }
 
 function kernel {
@@ -195,6 +208,7 @@ function kernel_clean {
 function mn_deps {
     install_ccnx
     install_influxDB
+    install_ccnping 
     echo "Installing Mininet dependencies"
     if [ "$DIST" = "Fedora" ]; then
         $install gcc make socat psmisc xterm openssh-clients iperf \
@@ -207,7 +221,7 @@ function mn_deps {
     fi
 
     echo "Installing Mininet core"
-    pushd $MININET_DIR/mininet
+    pushd $MININET_DIR/mn-ccnx
     sudo make install
     popd
 }

@@ -1497,15 +1497,13 @@ class MiniEdit( Frame ):
         for tool in self.tools:
             self.buttons[ tool ].config( state='disabled' )
 
-        #self.update_idletasks()
+        self.update_idletasks()
 
         progress = Toplevel(bd=2, relief='flat')
         progress.title("Operation in progess")
         text=Label(progress, text="Starting your network, please wait...", font='Helvetica 12', bg='white')
         text.pack()
-        print('comecou')
         self.startCCN()
-        print('terminou')
         progress.destroy()
 
     def doStop( self ):
