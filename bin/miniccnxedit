@@ -239,6 +239,12 @@ class PrefsDialog(tkSimpleDialog.Dialog):
         if 'dpctl' in self.prefValues:
             self.dpctlEntry.insert(0, self.prefValues['dpctl'])
 
+        Label(self.leftfieldFrame, text="Template output (full path):").grid(row=6, sticky=E)
+        self.templatePath = Entry(self.leftfieldFrame)
+        self.templatePath.grid(row=6, column=1)
+        if 'templatePath' in self.prefValues:
+            self.templatePath.insert(0, self.prefValues['templatePath'])
+
         # sFlow
         #sflowValues = self.prefValues['sflow']
         #self.sflowFrame= LabelFrame(self.rightfieldFrame, text='sFlow Profile for Open vSwitch', padx=5, pady=5)
@@ -304,6 +310,7 @@ class PrefsDialog(tkSimpleDialog.Dialog):
         dbPass = str(self.dbPass.get())
         #sw = self.switchType.get()
         dpctl = self.dpctlEntry.get()
+        templatePath = self.templatePath.get()
 
         #ovsOf10 = str(self.ovsOf10.get())
         #ovsOf11 = str(self.ovsOf11.get())
@@ -325,6 +332,7 @@ class PrefsDialog(tkSimpleDialog.Dialog):
                        'getMetrics': getMetrics,
                        'metricsTimer': metricsTimer,
                        'startCLI':startCLI,
+                       'templatePath' : templatePath,
                        'dbPrefs':{'dbName': dbName,
                                   'dbPort': dbPort,
                                   'dbUser': dbUser,
@@ -974,7 +982,7 @@ class MiniEdit( Frame ):
         self.hosts=[]
         self.collectors=[]
     
-        self.template_file = template_file
+        #self.template_file = template_file
         
         self.defaultIpBase='10.0.0.0/8'
     
@@ -986,7 +994,7 @@ class MiniEdit( Frame ):
                       'sflowHeader':'128',
                       'sflowPolling':'30'}
     
-        self.appPrefs={
+        self.defaultAppPrefs={
             "ipBase": self.defaultIpBase,
             "startCLI": "0",
             "terminalType": 'xterm',
@@ -999,6 +1007,7 @@ class MiniEdit( Frame ):
                         "dbHost": "localhost",
                         },
             "dpctl": '',
+            "templatePath" : template_file,
             #"switchType": 'ovs',
             #'sflow':self.sflowDefaults,
              #'netflow':self.nflowDefaults,
@@ -1007,6 +1016,8 @@ class MiniEdit( Frame ):
              #'ovsOf12':'0',
              #'ovsOf13':'0'}
             }
+
+        self.appPrefs = self.defaultAppPrefs 
 
         Frame.__init__( self, parent )
         self.action = None
@@ -1295,7 +1306,7 @@ class MiniEdit( Frame ):
             self.buttons[ tool ].config( state='normal' )
 
         toplevel = Toplevel()
-        label1 = Label(toplevel, text="Template file generated successfully", height=0, width=30)
+        label1 = Label(toplevel, text="Template " + self.appPrefs['templatePath'] + " file generated successfully")#, height=0, width=30)
         label1.pack()
         b=Button(toplevel, text="Ok", width=5, command=toplevel.destroy)
         b.pack(side='bottom', padx=0,pady=0)
@@ -1319,7 +1330,7 @@ class MiniEdit( Frame ):
         if ( temp_template ):
             template = open(temp_template, 'w')
         else: 
-            template = open(self.template_file, 'w')
+            template = open(self.appPrefs['templatePath'], 'w')
 
         #Write preferences        
         template.write('[preferences]\n')
@@ -1771,7 +1782,7 @@ class MiniEdit( Frame ):
         self.hostOpts = {}
         self.switchOpts = {}
         self.controllers = {}
-        self.appPrefs["ipBase"]= self.defaultIpBase
+        self.appPrefs= self.defaultAppPrefs
 
         self.net = None
 
