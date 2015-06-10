@@ -1392,82 +1392,84 @@ class MiniEdit( Frame ):
             template.write('\n')
 
         # switches
-        template.write('[switches]\n')
-        
-        for switch in self.switchOpts.values():
-
-            switchName=switch['hostname']
+        if ( self.switchOpts ):
+            template.write('[switches]\n')
             
-            #print(switch['switchType'])
-            
-            sOpts=self.switchOpts[switchName]
-    
-            template.write(switchName + ': switchType=' + switch['switchType'] + ' ')
-    
-            if switch['switchType'] == 'legacySwitch':
-                pass
-            else:
-                #print(sOpts)
-                if 'stopCommand' in sOpts:
-                    template.write('stopCommand=' + sOpts['stopCommand'] + ' ')
-    
-                if 'sflow' in sOpts:
-                    template.write('sflow=' + sOpts['sflow'] + ' ')
-    
-                if 'switchIP' in sOpts:
-                    template.write('switchIP=' + sOpts['switchIP'] + ' ')
-    
-                if 'dpid' in sOpts:
-                    template.write('dpid=' + sOpts['dpid'] + ' ')
-        
-                if 'dpctl' in sOpts:
-                    template.write('dpctl=' + sOpts['dpctl'] + ' ')
-        
-                if 'startCommand' in sOpts:
-                    template.write('startCommand=' + sOpts['startCommand'] + ' ')
-        
-                if 'netflow' in sOpts:
-                    template.write('netflow=' + sOpts['netflow'] + ' ')
-        
-                if 'externalInterfaces' in sOpts:
-                    extInt = self.parseList(sOpts['externalInterfaces'])
-                    template.write(extInt)
-                if 'controllers' in sOpts:
-                    controllers = self.parseList(sOpts['controllers'])
-                    template.write(controllers)
+            for switch in self.switchOpts.values():
 
-            template.write('\n')
+                switchName=switch['hostname']
+                
+                #print(switch['switchType'])
+                
+                sOpts=self.switchOpts[switchName]
+        
+                template.write(switchName + ': switchType=' + switch['switchType'] + ' ')
+        
+                if switch['switchType'] == 'legacySwitch':
+                    pass
+                else:
+                    #print(sOpts)
+                    if 'stopCommand' in sOpts:
+                        template.write('stopCommand=' + sOpts['stopCommand'] + ' ')
+        
+                    if 'sflow' in sOpts:
+                        template.write('sflow=' + sOpts['sflow'] + ' ')
+        
+                    if 'switchIP' in sOpts:
+                        template.write('switchIP=' + sOpts['switchIP'] + ' ')
+        
+                    if 'dpid' in sOpts:
+                        template.write('dpid=' + sOpts['dpid'] + ' ')
+            
+                    if 'dpctl' in sOpts:
+                        template.write('dpctl=' + sOpts['dpctl'] + ' ')
+            
+                    if 'startCommand' in sOpts:
+                        template.write('startCommand=' + sOpts['startCommand'] + ' ')
+            
+                    if 'netflow' in sOpts:
+                        template.write('netflow=' + sOpts['netflow'] + ' ')
+            
+                    if 'externalInterfaces' in sOpts:
+                        extInt = self.parseList(sOpts['externalInterfaces'])
+                        template.write(extInt)
+                    if 'controllers' in sOpts:
+                        controllers = self.parseList(sOpts['controllers'])
+                        template.write(controllers)
+
+                template.write('\n')
 
         # controllers
-        template.write('[controllers]\n')
+        if ( self.controllers ):
+            template.write('[controllers]\n')
 
-        for controller in self.controllers.values():
+            for controller in self.controllers.values():
 
-            hasOpt='False'
-            controllerName=controller['hostname']
-            #nodetype=router['nodetype']
-            #nodenum=router['nodenum']
-            
-            cOpts=self.controllers[controllerName]
-    
-            template.write(controllerName + ': ')
-    
-            if 'remotePort' in cOpts:
-                template.write('remotePort=' + repr(cOpts['remotePort']) + ' ')
-                hasOpt='True'
-            if 'controllerProtocol' in cOpts:
-                template.write('controllerProtocol=' + cOpts['controllerProtocol'] + ' ')
-                hasOpt='True'
-            if 'remoteIP' in cOpts:
-                template.write('remoteIP=' + cOpts['remoteIP'] + ' ')
-                hasOpt='True'
-            if 'controllerType' in cOpts:
-                template.write('controllerType=' + cOpts['controllerType'] + ' ')
-                hasOpt='True'
-            if hasOpt == 'False':
-                template.write('_')
+                hasOpt='False'
+                controllerName=controller['hostname']
+                #nodetype=router['nodetype']
+                #nodenum=router['nodenum']
+                
+                cOpts=self.controllers[controllerName]
+        
+                template.write(controllerName + ': ')
+        
+                if 'remotePort' in cOpts:
+                    template.write('remotePort=' + repr(cOpts['remotePort']) + ' ')
+                    hasOpt='True'
+                if 'controllerProtocol' in cOpts:
+                    template.write('controllerProtocol=' + cOpts['controllerProtocol'] + ' ')
+                    hasOpt='True'
+                if 'remoteIP' in cOpts:
+                    template.write('remoteIP=' + cOpts['remoteIP'] + ' ')
+                    hasOpt='True'
+                if 'controllerType' in cOpts:
+                    template.write('controllerType=' + cOpts['controllerType'] + ' ')
+                    hasOpt='True'
+                if hasOpt == 'False':
+                    template.write('_')
 
-            template.write('\n')
+                template.write('\n')
 
         # Make links
         template.write('[links]\n')

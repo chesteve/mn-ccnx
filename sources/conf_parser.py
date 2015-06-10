@@ -204,7 +204,10 @@ def parse_switches(conf_arq):
 
     switches = []
 
-    items = config.items('switches')
+    try:
+        items = config.items('switches')
+    except ConfigParser.NoSectionError:
+        return switches
 
     for item in items:
         name = item[0]
@@ -256,8 +259,10 @@ def parse_controllers(conf_arq):
     config.read(conf_arq)
 
     controllers = []
-
-    items = config.items('controllers')
+    try:
+        items = config.items('controllers')
+    except ConfigParser.NoSectionError:
+        return controllers
 
     for item in items:
         name = item[0]

@@ -141,7 +141,6 @@ class Mininet( object ):
         self.ipBase = ipBase
         self.ipBaseNum, self.prefixLen = netParse( self.ipBase )
         self.nextIP = 1  # start for address allocation
-        self.ccnNetBase = '1.0.0.0'
         self.inNamespace = inNamespace
         self.xterms = xterms
         self.cleanup = cleanup
@@ -156,6 +155,8 @@ class Mininet( object ):
         self.switches = []
         self.controllers = []
         self.links = []
+
+        self.ccnNetBase = '1.0.0.0'
         self.collectors = []
         self.getMetrics = preferences['getMetrics']
         self.metricsTimer = preferences['metricsTimer']
@@ -189,17 +190,14 @@ class Mininet( object ):
                                   prefixLen=self.prefixLen ) +
                                   '/%s' % self.prefixLen }
         if self.autoSetMacs:
-            defaults[ 'mac'] = macColonHex( self.nextIP )
+            defaults[ 'mac' ] = macColonHex( self.nextIP )
         if self.autoPinCpus:
             defaults[ 'cores' ] = self.nextCore
-            self.nextCore = ( self.nextCore + 1 ) % self.numCores        
+            self.nextCore = ( self.nextCore + 1 ) % self.numCores
         self.nextIP += 1
-        defaults = {}
         defaults.update( params )
-
         if not cls:
             cls = self.host
-        #aqui que ele cria os node!
         h = cls( name, **defaults )
         self.hosts.append( h )
         self.nameToNode[ name ] = h
