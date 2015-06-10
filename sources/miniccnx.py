@@ -44,7 +44,6 @@ class CCNTopo(Topo):
     def __init__(self, conf_arq, **opts):
         Topo.__init__(self, **opts)
 
-        #pdb.set_trace()
         hosts_conf = parse_hosts(conf_arq)
         routers_conf = parse_routers(conf_arq)
         switches_conf = parse_switches(conf_arq)
@@ -96,11 +95,11 @@ def execute(template_file='miniccnx.conf', testbed=False, fromGUI = False):
     t = datetime.datetime.now()
 
     if topo.isTCLink == True and topo.isLimited == True:
-        net = Mininet(topo,host=CPULimitedCCNHost,link=TCLink)
+        net = Mininet(topo,host=CPULimitedCCNHost,link=TCLink, preferences=preferences)
     elif topo.isTCLink == True and topo.isLimited == False:
-        net = Mininet(topo,host=CCNHost,link=TCLink)
+        net = Mininet(topo,host=CCNHost,link=TCLink, preferences=preferences)
     elif topo.isTCLink == False and topo.isLimited == True:
-        net = Mininet(topo,host=CPULimitedCCNHost)
+        net = Mininet(topo,host=CPULimitedCCNHost, preferences=preferences)
     else:
         net = Mininet(topo,host=CCNHost, preferences=preferences)
 
@@ -128,8 +127,11 @@ def execute(template_file='miniccnx.conf', testbed=False, fromGUI = False):
     for host in net.hosts:
         if 'app' in host.params:
             if host.params['app'] != '_':
+                #BE CAREFUL HERE! Cmd method waits for command to complete
+                #If your command doesn't return, use the following:
+                #host.sendCmd(host.params['app'])
                 host.cmd(host.params['app'])
-
+    info ('*** Done')
     if(not fromGUI):
         CLI(net)
         net.stop()

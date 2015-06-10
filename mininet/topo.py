@@ -50,7 +50,7 @@ class Topo(object):
            name: host name
            opts: host options
            returns: host name"""
-	    #pdb.set_trace()
+
         if not opts:
             if self.hopts:
                 opts = self.hopts
@@ -109,7 +109,6 @@ class Topo(object):
 
     def isSwitch(self, n):
         '''Returns true if node is a switch.'''
-	#pdb.set_trace()
         info = self.node_info[n]
         return info and info.get('isSwitch', False)
 

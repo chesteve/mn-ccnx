@@ -155,7 +155,7 @@ class Mininet( object ):
         self.hosts = []
         self.switches = []
         self.controllers = []
-        #pdb.set_trace()
+        self.links = []
         self.collectors = []
         self.getMetrics = preferences['getMetrics']
         self.metricsTimer = preferences['metricsTimer']
@@ -184,7 +184,6 @@ class Mininet( object ):
            params: parameters for host
            returns: added host"""
         # Default IP and MAC addresses
-	#pdb.set_trace()
         defaults = { 'ip': ipAdd( self.nextIP,
                                   ipBaseNum=self.ipBaseNum,
                                   prefixLen=self.prefixLen ) +
@@ -312,12 +311,12 @@ class Mininet( object ):
             self.addHost( hostName, **topo.nodeInfo( hostName ) )
             info( hostName + ' ' )
         #info( hostName + '\n' )
-        #pdb.set_trace()
 
-        info( '\n*** Adding switches:\n' )
-        for switchName in topo.switches():
-            self.addSwitch( switchName, **topo.nodeInfo( switchName) )
-            info( switchName + ' ' )
+        if self.switches:
+            info( '\n*** Adding switches:\n' )
+            for switchName in topo.switches():
+                self.addSwitch( switchName, **topo.nodeInfo( switchName) )
+                info( switchName + ' ' )
 
         info( '\n*** Adding links:\n' )
         for srcName, dstName in topo.links(sort=True):
@@ -341,14 +340,12 @@ class Mininet( object ):
 
     def build( self ):
         "Build mininet."
-        #pdb.set_trace()
         if self.topo:
             self.buildFromTopo( self.topo )
         if ( self.inNamespace ):
             self.configureControlNetwork()
         info( '*** Configuring hosts\n' )
         self.configHosts()
-
 
         if(self.getMetrics == 1):
             info( '*** Adding metrics collectors:\n' )
@@ -386,13 +383,17 @@ class Mininet( object ):
         "Start controller and switches."
         if not self.built:
             self.build()
-        #info( '*** Starting controller\n' )
-        #for controller in self.controllers:
-        #    controller.start()
-        info( '*** Starting %s switches\n' % len( self.switches ) )
-        for switch in self.switches:
-            info( switch.name + ' ')
-            switch.start( self.controllers )
+
+        if self.controllers:
+            info( '*** Starting controller\n' )
+            for controller in self.controllers:
+                controller.start()
+
+        if self.switches:
+            info( '*** Starting %s switches\n' % len( self.switches ) )
+            for switch in self.switches:
+                info( switch.name + ' ')
+                switch.start( self.controllers )
         info( '\n' )
 
     def stop( self ):
@@ -400,28 +401,32 @@ class Mininet( object ):
         if self.terms:
             info( '*** Stopping %i terms\n' % len( self.terms ) )
             self.stopXterms()
+        
+        info( '\n' )
+        info( '*** Stopping %i collectors\n' % len( self.collectors ) )
+        for collector in self.collectors:
+            collector.stop()
+        info( '\n' )
+
         info( '*** Stopping %i hosts\n' % len( self.hosts ) )
         for host in self.hosts:
             info( host.name + ' ' )
             host.terminate()
         info( '\n' )
-        info( '*** Stopping %i switches\n' % len( self.switches ) )
-        for switch in self.switches:
-            info( switch.name + ' ' )
-            switch.stop()
-        info( '\n' )
-        info( '*** Stopping %i controllers\n' % len( self.controllers ) )
-        for controller in self.controllers:
-            info( controller.name + ' ' )
-            controller.stop()
-        info( '\n' )
-        info( '*** Stopping %i collectors\n' % len( self.collectors ) )
-        for collector in self.collectors:
-            collector.stop()
-        info( '\n*** Done\n' )
 
+        if self.switches:
+            info( '*** Stopping %i switches\n' % len( self.switches ) )
+            for switch in self.switches:
+                info( switch.name + ' ' )
+                switch.stop()
+            info( '\n' )
+        if self.controllers:
+            info( '*** Stopping %i controllers\n' % len( self.controllers ) )
+            for controller in self.controllers:
+                info( controller.name + ' ' )
+                controller.stop()
 
-        
+        info( '\n*** Done\n' )        
 
     def run( self, test, *args, **kwargs ):
         "Perform a complete start/test/stop cycle."

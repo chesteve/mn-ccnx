@@ -1340,10 +1340,11 @@ class MiniEdit( Frame ):
             if 'Host' in tags:
                 hOpts=self.hostOpts[name]
                 template.write(name + ': ')
+
                 if 'startCommand' in hOpts:
-                    template.write(hOpts['startCommand'] + ' ')
-                else:
-                    template.write('_ ')
+                    template.write("'" + hOpts['startCommand'] + "' ")
+                #else:
+                    #template.write('_ ')
                 if 'cache' in hOpts:
                     template.write('cache=' + hOpts['cache'] + ' ')
                 if 'cpu' in hOpts:
@@ -1497,12 +1498,11 @@ class MiniEdit( Frame ):
         for tool in self.tools:
             self.buttons[ tool ].config( state='disabled' )
 
-        self.update_idletasks()
-
         progress = Toplevel(bd=2, relief='flat')
         progress.title("Operation in progess")
         text=Label(progress, text="Starting your network, please wait...", font='Helvetica 12', bg='white')
         text.pack()
+        self.update_idletasks()
         self.startCCN()
         progress.destroy()
 
@@ -1513,14 +1513,15 @@ class MiniEdit( Frame ):
         progress.title("Operation in progess")
         text=Label(progress, text="Stopping your network, please wait...", font='Helvetica 12', bg='white')
         text.pack()
-
+        self.update_idletasks()
         self.stop()
 
         for tool in self.tools:
             self.buttons[ tool ].config( state='normal' )
 
         progress.destroy() 
-
+        self.update_idletasks()
+        
     def addNode( self, node, nodeNum, x, y, name=None):
         "Add a new node to our canvas."
 
@@ -2825,10 +2826,10 @@ class MiniEdit( Frame ):
                 # Run User Defined Start Command
                 if 'startCommand' in opts:
                     newHost.cmdPrint(opts['startCommand'])
-                if (self.appPrefs['getMetrics'] is '1'):
-                    print "Adding metrics collectors..."
-                    collector=MetricsCollector(newHost, self.appPrefs['metricsTimer'], self.appPrefs['dbPrefs'])
-                    self.collectors.append(collector)
+                #if (self.appPrefs['getMetrics'] is '1'):
+                #    print "Adding metrics collectors..."
+                #    collector=MetricsCollector(newHost, self.appPrefs['metricsTimer'], self.appPrefs['dbPrefs'])
+                #    self.collectors.append(collector)
 
             if 'Switch' in tags:
                 newNode = self.net.get(name)
@@ -2909,7 +2910,7 @@ class MiniEdit( Frame ):
         self.buildTemplate (temp_template = temp_file)
 
         #topo = CCNTopo(temp_template)
-        #executes miniccnx method to build everything
+        #executes miniccnx method to build and run everything
         self.net = execute(template_file=temp_file, fromGUI = True)
         os.remove(temp_file)
 
@@ -2975,8 +2976,9 @@ class MiniEdit( Frame ):
                     if 'stopCommand' in opts:
                         newNode.cmdPrint(opts['stopCommand'])
 
-            for collector in self.collectors:
-                collector.stop()
+
+            for link in self.links:
+                self.canvas.itemconfig(link, dash=())
 
             self.net.stop()
         cleanUpScreens()

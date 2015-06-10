@@ -3,7 +3,7 @@ import pdb
 
 class confCCNHost():
 
-    def __init__(self, name, app='', uri_tuples='', cpu=None, cores=None, cache=None):
+    def __init__(self, name, app='', uri_tuples='', cpu=None, cores=None, cache=None, startCommand=''):
         self.name = name
         self.app = app
         self.uri_tuples = uri_tuples
@@ -12,7 +12,7 @@ class confCCNHost():
         self.cache = cache
 
     def __repr__(self):
-        return 'Name: ' + self.name + ' App: ' + self.app + ' URIS: ' + str(self.uri_tuples) + ' CPU:' + str(self.cpu) + ' Cores:' +str(self.cores) + ' Cache: ' + str(self.cache)
+        return 'Name: ' + self.name + ' Start Command: ' + self.app + ' URIS: ' + str(self.uri_tuples) + ' CPU:' + str(self.cpu) + ' Cores:' +str(self.cores) + ' Cache: ' + str(self.cache)
 
 class confSwitch():
 
@@ -75,30 +75,36 @@ def parse_hosts(conf_arq):
 
     #makes a second-pass read to hosts section to properly add hosts
     for item in items:
-
         name = item[0]
 
-        rest = item[1].split()
+        rest = item[1].split("'")
 
-        app = rest.pop(0)
+        if (len(rest) > 1):
+                app = rest[1]
+                uris = rest[2].split()
+        else: 
+                uris = item[1].split()
+                app='_'
 
-        uris = rest
         uri_list=[]
         cpu = None
         cores = None
         cache = None
 
-        for uri in uris:
-            if re.match("cpu",uri):
-                cpu = float(uri.split('=')[1])
-            elif re.match("cores",uri):
-                cores = uri.split('=')[1]
-            elif re.match("cache",uri):
-                cache = uri.split('=')[1]
-            elif re.match("mem",uri):
-                mem = uri.split('=')[1]           
-            else:
-                uri_list.append((uri.split(',')[0],uri.split(',')[1]))
+        if '_' in uris:
+            pass
+        else:
+            for uri in uris:
+                if re.match("cpu",uri):
+                    cpu = float(uri.split('=')[1])
+                elif re.match("cores",uri):
+                    cores = uri.split('=')[1]
+                elif re.match("cache",uri):
+                    cache = uri.split('=')[1]
+                elif re.match("mem",uri):
+                    mem = uri.split('=')[1]         
+                else:
+                    uri_list.append((uri.split(',')[0],uri.split(',')[1]))
 
         hosts.append(confCCNHost(name, app, uri_list, cpu, cores, cache))
 
@@ -281,7 +287,6 @@ def parse_preferences(conf_arq):
     'Parse preferences section from the conf file.'
     config = ConfigParser.RawConfigParser()
     config.read(conf_arq)
-    #pdb.set_trace()
 
     items = config.items('preferences')
 

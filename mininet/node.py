@@ -742,8 +742,8 @@ class CCNHost( Host ):
 
         r = Node.config( self, **params )
 
-        self.setParam( r, 'app', fib=fib )
-        self.setParam( r, 'fib', app=app)
+        self.setParam( r, 'fib', fib=fib )
+        self.setParam( r, 'app', app=app)
 	self.setParam( r, 'cache', cache=cache )
 
         return r
