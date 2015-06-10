@@ -131,7 +131,8 @@ def execute(template_file='miniccnx.conf', testbed=False, fromGUI = False):
                 #If your command doesn't return, use the following:
                 #host.sendCmd(host.params['app'])
                 host.cmd(host.params['app'])
-    info ('*** Done')
+    info ('*** Done\n')
+    info('\n')
     if(not fromGUI):
         CLI(net)
         net.stop()
