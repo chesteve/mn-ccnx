@@ -1143,6 +1143,7 @@ class MiniEdit( Frame ):
         self.switchCount = 0
         self.controllerCount = 0
         self.net = None
+        self.isRunning = False
 
         # Close window gracefully
         Wm.wm_protocol( self.top, name='WM_DELETE_WINDOW', func=self.quit )
@@ -1171,7 +1172,7 @@ class MiniEdit( Frame ):
     
         editMenu = Menu( mbar, tearoff=False )
         mbar.add_cascade( label="Edit", font=font, menu=editMenu )
-        editMenu.add_command( label="Cut", font=font,
+        editMenu.add_command( label="Cut (delete)", font=font,
                               command=lambda: self.deleteSelection( None ) )
 
     # Application menu
@@ -1311,6 +1312,11 @@ class MiniEdit( Frame ):
         b=Button(toplevel, text="Ok", width=5, command=toplevel.destroy)
         b.pack(side='bottom', padx=0,pady=0)
         toplevel.attributes("-topmost", True)
+        
+        if (self.isRunning):
+            for tool in self.tools:
+                self.buttons[ tool ].config( state='disabled' )
+            self.update_idletasks()
 
     def parseList ( self, customList ):
         "Parse Lists (FIB Entries, external interfaces, controllers etc. for write on template file"
@@ -1518,11 +1524,12 @@ class MiniEdit( Frame ):
         self.update_idletasks()
         self.startCCN()
         progress.destroy()
+        self.isRunning=True
 
     def doStop( self ):
         "Stop command."
 
-        progress = Toplevel(bd=4, relief='flat')
+        progress = Toplevel(bd=2, relief='flat')
         progress.title("Operation in progess")
         text=Label(progress, text="Stopping your network, please wait...", font='Helvetica 12', bg='white')
         text.pack()
@@ -1534,6 +1541,7 @@ class MiniEdit( Frame ):
 
         progress.destroy() 
         self.update_idletasks()
+        self.isRunning=False
         
     def addNode( self, node, nodeNum, x, y, name=None):
         "Add a new node to our canvas."
