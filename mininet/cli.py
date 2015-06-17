@@ -101,24 +101,23 @@ class CLI( Cmd ):
         'You may also send a command to a node using:\n'
         '  <node> command {args}\n'
         'For example:\n'
-        '  mininet> h1 ifconfig\n'
+        '  miniccnx> h1 ifconfig\n'
         '\n'
         'The interpreter automatically substitutes IP addresses\n'
         'for node names when a node is the first arg, so commands\n'
         'like\n'
-        '  mininet> h2 ping h3\n'
+        '  miniccnx> h2 ping h3\n'
         'should work.\n'
         '\n'
         'Some character-oriented interactive commands require\n'
         'noecho:\n'
-        '  mininet> noecho h2 vi foo.py\n'
+        '  miniccnx> noecho h2 vi foo.py\n'
         'However, starting up an xterm/gterm is generally better:\n'
-        '  mininet> xterm h2\n\n'
+        '  miniccnx> xterm h2\n\n'
     )
 
     def do_help( self, line ):
         "Describe available CLI commands."
-	#pdb.set_trace()
         Cmd.do_help( self, line )
         if line is '':
             output( self.helpStr )
@@ -261,6 +260,7 @@ class CLI( Cmd ):
 
     def do_exit( self, _line ):
         "Exit"
+        info( '\n*** Stopped CLI.\n' )
         return 'exited by user command'
 
     def do_quit( self, line ):
@@ -322,15 +322,14 @@ class CLI( Cmd ):
 
     def do_dropdb (self, line):
         "Drops specified database from InfluxDB and all its data."
-
         args = line.split()
         if len(args) != 1:
-            error( 'usage: deletedb [dbname]\n')
+            error( 'usage: dropdb [dbname]\n')
             return
         dbname = args[0].strip('()[]{}<>')
         self.dbmanager.dropDatabase(dbname)
         if(dbname is 'miniccnx_data'):
-            info('Note that your experiment might not be writting collected data into the default database now!\n')
+            info('Note that your experiment might not be writting collected data into the default database from now on!\n')
 
     def do_createdb (self, line):
         "Creates a new database into InfluxDB."
@@ -383,7 +382,6 @@ class CLI( Cmd ):
 
     #def do_listusers (self, line):
     #    "Lists all existing users in the current context."
-    #    pdb.set_trace()
     #    args = line.split()
     #    if len(args) > 0:
     #        error( 'usage: listusers\n')
@@ -397,7 +395,6 @@ class CLI( Cmd ):
 
     def do_listseries (self, line):
         "Lists all existing series in the database."
-        pdb.set_trace()
         args = line.split()
         if len(args) != 1:
             error( 'usage: listseries [dbname]\n')
@@ -413,13 +410,13 @@ class CLI( Cmd ):
 
     def do_querydb (self, line):
         "Queries the database and return the results."
-        pdb.set_trace()
         args = line.split(None, 1)
         if len(args) != 2 :
             error( 'usage: query [database] <query>\n')
             return
+
         dbname=args[0].strip('()[]{}<>')
-        query=args[1].strip("\" ' ")
+        query=args[1]#.strip("\" ' ")
 
         result = self.dbmanager.queryDB(query, db=dbname)
 

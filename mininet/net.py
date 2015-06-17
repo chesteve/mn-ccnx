@@ -348,8 +348,12 @@ class Mininet( object ):
         if(self.getMetrics == 1):
             info( '*** Adding metrics collectors:\n' )
             for host in self.hosts:
-                collector=MetricsCollector(host, self.metricsTimer, self.dbPrefs)
-                self.collectors.append(collector)
+                if (host.params['getMetrics']):
+                    collector=MetricsCollector(host, self.metricsTimer, self.dbPrefs)
+                    self.collectors.append(collector)
+        else:
+            info( '*** Metrics collection disabled: nothing to add.\n')
+
         if self.xterms:
             self.startTerms()
         if self.autoStaticArp:

@@ -130,7 +130,7 @@ class PrefsDialog(tkSimpleDialog.Dialog):
 
         # Metrics collection parameters
         metricsFrame=LabelFrame(self.leftfieldFrame, text="Metrics:", padx=5, pady=5)
-        metricsFrame.grid(row=3, column=0, columnspan=2, sticky=EW)
+        metricsFrame.grid(row=3, column=0, columnspan=2, sticky=W)
         Label(metricsFrame, text="Collect Metrics:").grid(row=0, sticky=E)
         self.getMetrics = IntVar()
         self.metricsButton = Checkbutton(metricsFrame, variable=self.getMetrics)
@@ -233,11 +233,11 @@ class PrefsDialog(tkSimpleDialog.Dialog):
         #    self.covsOf13.select()
 
         # Field for DPCTL listen port
-        Label(self.leftfieldFrame, text="dpctl port:").grid(row=5, sticky=E)
-        self.dpctlEntry = Entry(self.leftfieldFrame)
-        self.dpctlEntry.grid(row=5, column=1)
-        if 'dpctl' in self.prefValues:
-            self.dpctlEntry.insert(0, self.prefValues['dpctl'])
+        #Label(self.leftfieldFrame, text="dpctl port:").grid(row=5, sticky=E)
+        #self.dpctlEntry = Entry(self.leftfieldFrame)
+        #self.dpctlEntry.grid(row=5, column=1)
+        #if 'dpctl' in self.prefValues:
+        #    self.dpctlEntry.insert(0, self.prefValues['dpctl'])
 
         Label(self.leftfieldFrame, text="Template output (full path):").grid(row=6, sticky=E)
         self.templatePath = Entry(self.leftfieldFrame)
@@ -309,7 +309,7 @@ class PrefsDialog(tkSimpleDialog.Dialog):
         dbUser = str(self.dbUser.get())
         dbPass = str(self.dbPass.get())
         #sw = self.switchType.get()
-        dpctl = self.dpctlEntry.get()
+        dpctl = ''#self.dpctlEntry.get()
         templatePath = self.templatePath.get()
 
         #ovsOf10 = str(self.ovsOf10.get())
@@ -488,6 +488,27 @@ class HostDialog(CustomDialog):
             else: 
                 self.startEntry= Entry(self.propFrame)
 
+
+            #Field for individual metrics collector
+                    # Metrics collection parameters
+            metricsFrame=LabelFrame(self.propFrame, text="Metrics:", padx=5, pady=5)
+            metricsFrame.grid(row=6, column=1, columnspan=1, sticky=E+W)
+            Label(metricsFrame, text="Collect Metrics:").grid(row=0, sticky=E)
+            self.getMetrics = IntVar()
+            self.getMetricsButton = Checkbutton(metricsFrame, variable=self.getMetrics)
+            self.getMetricsButton.grid(row=0, column=1, sticky=E)
+
+
+            if 'getMetrics' in self.prefValues:
+                if self.prefValues['getMetrics'] == '0':
+                    self.getMetricsButton.deselect()
+                else:
+                    self.getMetricsButton.select()
+            else:
+                self.getMetricsButton.deselect()
+			
+
+
             ### TAB 2
             # FIB Entries
             self.fibEntries = 0
@@ -528,6 +549,7 @@ class HostDialog(CustomDialog):
                        'mem': self.memEntry.get(),
                        'hostname':self.hostnameEntry.get(),
                        'startCommand':self.startEntry.get(),
+                       'getMetrics':self.getMetrics.get(),
                        'fibEntries':fibEntries}
             self.result = results
 
@@ -980,7 +1002,7 @@ class MiniEdit( Frame ):
     def __init__( self, parent=None, cheight=600, cwidth=1000, template_file='miniccnx.conf' ):
 
         self.hosts=[]
-        self.collectors=[]
+        #self.collectors=[]
     
         #self.template_file = template_file
         
@@ -1084,6 +1106,12 @@ class MiniEdit( Frame ):
         self.bind( '<Control-comma>', lambda event: self.prefDetails() )
         self.bind( '<KeyPress-Delete>', self.deleteSelection )
         self.bind( '<KeyPress-BackSpace>', self.deleteSelection )
+        
+        self.bind ( '<KeyPress-s>', lambda event: self.activate('Select'))
+        self.bind ( '<KeyPress-h>', lambda event: self.activate('Host'))
+        self.bind ( '<KeyPress-r>', lambda event: self.activate('LegacyRouter'))
+        self.bind ( '<KeyPress-l>', lambda event: self.activate('NetLink'))        
+
         self.focus()
 
         #Mouse bindings
@@ -1150,7 +1178,7 @@ class MiniEdit( Frame ):
 
     def quit( self ):
         "Stop our network, if any, then quit."
-        self.stop()
+        self.doStop()
         Frame.quit( self )
 
     def createMenubar( self ): # MODIFICADO - OK
@@ -1246,7 +1274,7 @@ class MiniEdit( Frame ):
 
     # Toolbar
 
-    def activate( self, toolName ): #IGUAL - OK
+    def activate( self, toolName ):
         "Activate a tool and press its button."
         # Adjust button appearance
         if self.active:
@@ -1265,7 +1293,7 @@ class MiniEdit( Frame ):
         widget.bind('<Enter>', enter)
         widget.bind('<Leave>', leave)
 
-    def createToolbar( self ): #MODIFICADO - OK
+    def createToolbar( self ):
         "Create and return our toolbar frame."
 
         toolbar = Frame( self )
@@ -1285,8 +1313,6 @@ class MiniEdit( Frame ):
         # Spacer
         Label( toolbar, text='' ).pack()
 
-    # abaixo copiado Mini-CCNx para criar botao Generate
-
         for cmd, color in [ ( 'Stop', 'darkRed' ), ( 'Run', 'darkGreen' ), ( 'Generate', 'darkBlue' ) ]:
             doCmd = getattr( self, 'do' + cmd )
             b = Button( toolbar, text=cmd, font=self.smallFont,
@@ -1295,7 +1321,7 @@ class MiniEdit( Frame ):
 
         return toolbar
 
-    def doGenerate( self ): #COPIA Mini-CCNx - GERA TEMPLATE
+    def doGenerate( self ):
         "Generate template."
         self.activate( 'Select' )
         for tool in self.tools:
@@ -1328,8 +1354,6 @@ class MiniEdit( Frame ):
     
         return result
 
-    
-
     def buildTemplate( self, temp_template = ""):
         "Generate template"
         
@@ -1345,7 +1369,7 @@ class MiniEdit( Frame ):
             if ( key is "dbPrefs" ):
                 for entry in self.appPrefs[key]:
                     template.write("%s: %s\n" % (entry, self.appPrefs[key][entry]))
-            else:
+            elif (key is not "dpctl" ):
                 template.write("%s: %s\n" % (key, self.appPrefs[key]))
 
         # hosts
@@ -1370,6 +1394,9 @@ class MiniEdit( Frame ):
                 if 'mem' in hOpts:
                     mem=float(hOpts['mem'])/100
                     template.write('mem=' + repr(mem) + ' ')
+                if 'getMetrics' in hOpts:
+                    getMetrics=hOpts['getMetrics']
+                    template.write('getMetrics=' + repr(getMetrics) + ' ')
                 if 'fibEntries' in hOpts:
                     customFib = self.parseList(hOpts['fibEntries'])
                     template.write(customFib)
@@ -1400,6 +1427,9 @@ class MiniEdit( Frame ):
             if 'cache' in rOpts:
                 template.write('cache=' + rOpts['cache'] + ' ')
                 hasOpt='True'
+            if 'getMetrics' in rOpts:
+                getMetrics=rOpts['getMetrics']
+                template.write('getMetrics=' + repr(getMetrics) + ' ')
             if 'fibEntries' in rOpts:
                 customFib = self.parseList(rOpts['fibEntries'])
                 template.write(customFib)
@@ -1525,6 +1555,13 @@ class MiniEdit( Frame ):
         self.startCCN()
         progress.destroy()
         self.isRunning=True
+
+        #copied from postStartSetup only to start CLI in case the option was checked
+        ## NOTE: MAKE SURE THIS IS LAST THING CALLED
+        # Start the CLI if enabled
+        if self.appPrefs['startCLI'] == '1':
+            info( "\n\n NOTE: PLEASE REMEMBER TO EXIT THE CLI BEFORE YOU PRESS THE STOP BUTTON. Not exiting will prevent MiniEdit from quitting and will prevent you from starting the network again during this sessoin.\n\n")
+            CLI(self.net)
 
     def doStop( self ):
         "Stop command."
@@ -1994,6 +2031,7 @@ class MiniEdit( Frame ):
             self.routerOpts[name]['nodeNum']=self.routerCount
             self.routerOpts[name]['hostname']=name
             self.routerOpts[name]['nodeType']='legacyRouter'
+            self.routerOpts[name]['getMetrics']=1
 
         if 'Host' == node:
             self.hostCount += 1
@@ -2001,6 +2039,7 @@ class MiniEdit( Frame ):
             self.hostOpts[name] = {'sched':'host'}
             self.hostOpts[name]['nodeNum']=self.hostCount
             self.hostOpts[name]['hostname']=name
+            self.hostOpts[name]['getMetrics']=1
 
         icon = self.nodeIcon( node, name )
         item = self.canvas.create_window( x, y, anchor='c', window=icon,
@@ -2308,7 +2347,6 @@ class MiniEdit( Frame ):
 
     #print tags
         if 'Host' in tags:
-
             prefDefaults = self.hostOpts[name]
             hostBox = HostDialog(self, title='Host Details', prefDefaults=prefDefaults, isRouter='False')
             self.master.wait_window(hostBox.top)
@@ -2319,6 +2357,8 @@ class MiniEdit( Frame ):
                     newHostOpts['startCommand'] = hostBox.result['startCommand']
                 if hostBox.result['cpu']:
                     newHostOpts['cpu'] = hostBox.result['cpu']
+                if hostBox.result['getMetrics']:
+                    newHostOpts['getMetrics'] = hostBox.result['getMetrics']
                 if hostBox.result['mem']:
                     newHostOpts['mem'] = hostBox.result['mem']
                 if len(hostBox.result['hostname']) > 0:
@@ -2343,6 +2383,8 @@ class MiniEdit( Frame ):
                 newRouterOpts = {'nodeNum':self.routerOpts[name]['nodeNum']}
                 if hostBox.result['cpu']:
                     newRouterOpts['cpu'] = hostBox.result['cpu']
+                if hostBox.result['getMetrics']:
+                    newRouterOpts['getMetrics'] = hostBox.result['getMetrics']
                 if hostBox.result['mem']:
                     newRouterOpts['mem'] = hostBox.result['mem']
                 if len(hostBox.result['hostname']) > 0:

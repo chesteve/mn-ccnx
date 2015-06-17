@@ -54,15 +54,14 @@ class CCNTopo(Topo):
         self.isLimited = False
 
         for host in hosts_conf:
-
             if host.cpu != None and self.isLimited != True:
                 self.isLimited = True
-            self.addHost(host.name, app=host.app, fib=host.uri_tuples,cpu=host.cpu,cores=host.cores,cache=host.cache)
+            self.addHost(host.name, app=host.app, fib=host.uri_tuples,cpu=host.cpu,cores=host.cores,cache=host.cache, getMetrics=host.getMetrics)
 
         for router in routers_conf:
             if router.cpu != None and self.isLimited != True:
                 self.isLimited = True
-            self.addHost(router.name,fib=router.uri_tuples,cpu=router.cpu,cores=router.cores, cache=router.cache)
+            self.addHost(router.name,fib=router.uri_tuples,cpu=router.cpu,cores=router.cores, cache=router.cache, getMetrics=router.getMetrics)
 
         for switch in switches_conf:
             self.addSwitch(switch.name, switchType=switch.switchType, stopCommand=switch.stopCommand, sflow=switch.sflow, switchIP=switch.switchIP, dpid=switch.dpid, dpctl=switch.dpctl, startCommand=switch.startCommand, netflow=switch.netflow, externalInterfaces=switch.externalInterfaces, controllers=switch.controllers)

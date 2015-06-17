@@ -319,7 +319,7 @@ class DBManager ():
             print("Database: %s does not exist." % dropdb)
             return False
 
-        if(self.lookForDatabase(dropdb)):
+        if(not self.lookForDatabase(dropdb)):
             print("Database: %s dropped successfully!" % dropdb)
             return True
         else:

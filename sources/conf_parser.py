@@ -3,16 +3,17 @@ import pdb
 
 class confCCNHost():
 
-    def __init__(self, name, app='', uri_tuples='', cpu=None, cores=None, cache=None, startCommand=''):
+    def __init__(self, name, app='', uri_tuples='', cpu=None, cores=None, cache=None, startCommand='', getMetrics=0):
         self.name = name
         self.app = app
         self.uri_tuples = uri_tuples
         self.cpu = cpu
         self.cores = cores
         self.cache = cache
+        self.getMetrics = getMetrics
 
     def __repr__(self):
-        return 'Name: ' + self.name + ' Start Command: ' + self.app + ' URIS: ' + str(self.uri_tuples) + ' CPU:' + str(self.cpu) + ' Cores:' +str(self.cores) + ' Cache: ' + str(self.cache)
+        return 'Name: ' + self.name + ' Start Command: ' + self.app + ' URIS: ' + str(self.uri_tuples) + ' CPU:' + str(self.cpu) + ' Cores:' +str(self.cores) + ' Cache: ' + str(self.cache) + ' Collect Metrics: ' + str(self.getMetrics)
 
 class confSwitch():
 
@@ -90,6 +91,7 @@ def parse_hosts(conf_arq):
         cpu = None
         cores = None
         cache = None
+        getMetrics=0
 
         if '_' in uris:
             pass
@@ -102,11 +104,13 @@ def parse_hosts(conf_arq):
                 elif re.match("cache",uri):
                     cache = uri.split('=')[1]
                 elif re.match("mem",uri):
-                    mem = uri.split('=')[1]         
+                    mem = uri.split('=')[1] 
+                elif re.match("getMetrics",uri):
+                    getMetrics = uri.split('=')[1]         
                 else:
                     uri_list.append((uri.split(',')[0],uri.split(',')[1]))
 
-        hosts.append(confCCNHost(name, app, uri_list, cpu, cores, cache))
+        hosts.append(confCCNHost(name, app, uri_list, cpu, cores, cache, getMetrics=getMetrics))
 
     return hosts
 
@@ -129,6 +133,7 @@ def parse_routers(conf_arq):
         cpu = None
         cores = None
         cache = None
+        getMetrics=0
 
         if '_' in rest:
             pass
@@ -142,10 +147,12 @@ def parse_routers(conf_arq):
                     cache = opt.split('=')[1]
                 elif re.match("mem",opt):
                     mem = opt.split('=')[1]
+                elif re.match("getMetrics",opt):
+                    getMetrics = opt.split('=')[1]   
                 else:
                     uri_list.append((opt.split(',')[0],opt.split(',')[1]))
 
-        routers.append(confCCNHost(name=name, uri_tuples=uri_list, cpu=cpu, cores=cores, cache=cache))
+        routers.append(confCCNHost(name=name, uri_tuples=uri_list, cpu=cpu, cores=cores, cache=cache, getMetrics=getMetrics))
 
     return routers
 

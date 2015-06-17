@@ -166,8 +166,8 @@ function install_influxDB () {
           	fi
 
 	    pushd "$INFLUX_DIR"
-	    sudo wget http://get.influxdb.org/influxdb_0.9.0-rc31_amd64.deb
-	    sudo dpkg -i influxdb_0.9.0-rc31_amd64.deb
+	    sudo wget https://s3.amazonaws.com/influxdb/influxdb_latest_amd64.deb
+            sudo dpkg -i influxdb_latest_amd64.deb
 	    sudo wget https://bootstrap.pypa.io/get-pip.py 
 	    sudo python get-pip.py
 	    sudo pip install influxdb
