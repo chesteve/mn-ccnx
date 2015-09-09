@@ -72,9 +72,9 @@ class MetricsCollector(object):
                 elif(line == 3):
                     iTotals[itemSplit[1]] = itemSplit[0]
 
-        contentItems['host']=hostname
-        interests['host']=hostname
-        iTotals['host']=hostname
+        #contentItems['host']=hostname
+        #interests['host']=hostname
+        #iTotals['host']=hostname
 
         contentList.append({"name": 'content_items', "data": contentItems})
         contentList.append({"name": 'interests', "data": interests})
@@ -114,7 +114,7 @@ class MetricsCollector(object):
                 "pending":  pending,
                 "local":    local,
                 "remote":   remote,
-                "host":     hostname,
+                #"host":     hostname,
             }
     
             facesStats.append({"name": 'faces', "data": faceInfo})
@@ -138,7 +138,7 @@ class MetricsCollector(object):
                 "sInt":     rData[1],
                 "sData":    sData[0],
                 "rInt":     sData[1],
-                "host":     hostname,
+                #"host":     hostname,
             }
 
             facesRates.append({"name": 'face_activity_rates', "data": faceInfo})
@@ -156,7 +156,7 @@ class MetricsCollector(object):
                 "face":     splitLine[3],
                 "flags":    splitLine[5],
                 "expires":  splitLine[7],
-                "host":     hostname,
+                #"host":     hostname,
             }
 
             forwarding.append({"name": 'forwarding', "data": faceInfo})
@@ -172,14 +172,16 @@ class MetricsCollector(object):
         for data in dataList:
             for series in data:
                 newEntry={
-                    "name": series['name'],
-                    #"tags": None,
+                    "measurement": series['name'],
+                    "tags": {
+                        "hostname": hostname,
+                    },
                     "time": datetime.datetime.now().strftime('%Y-%m-%dT%H:%M:%S.%fZ'),
                     "fields": series['data']
                 }
     
                 datapoints.append(newEntry)
-        
+        #pdb.set_trace()
         return datapoints
 
     def checkDatabase(self, dbname='miniccnx_data'):
@@ -192,6 +194,7 @@ class MetricsCollector(object):
         return False
 
     def writeToDatabase(self, datapoints):
+        #pdb.set_trace()
         self.client.write_points(datapoints)
         
     def scheduledTasks(self):
@@ -377,5 +380,4 @@ class DBManager ():
         #do not use hifens '-' in the database name! InfluxDB doesn't like them
         self.dbname = 'miniccnx_data'
         self.client = InfluxDBClient(dbhost, dbport, dbuser, dbpass)
-
         

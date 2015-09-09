@@ -135,7 +135,7 @@ def parse_routers(conf_arq):
         cache = None
         getMetrics=0
 
-        if '_' in rest:
+        if rest[0] is '_':
             pass
         else:
             for opt in rest:

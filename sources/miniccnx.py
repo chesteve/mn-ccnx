@@ -43,7 +43,6 @@ def parse_args():
 class CCNTopo(Topo):
     def __init__(self, conf_arq, **opts):
         Topo.__init__(self, **opts)
-
         hosts_conf = parse_hosts(conf_arq)
         routers_conf = parse_routers(conf_arq)
         switches_conf = parse_switches(conf_arq)

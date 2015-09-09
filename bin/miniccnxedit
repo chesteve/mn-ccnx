@@ -1069,7 +1069,7 @@ class MiniEdit( Frame ):
         self.images = miniEditImages()
         self.buttons = {}
         self.active = None
-        self.tools = ( 'Select', 'Host', 'LegacyRouter', 'NetLink')#, 'Switch', 'LegacySwitch', 'Controller' )
+        self.tools = ( 'Select', 'Host', 'LegacyRouter', 'NetLink' )#, 'Switch', 'LegacySwitch', 'Controller' )
         self.customColors = { 'Switch': 'darkGreen', 'Host': 'blue' }
         self.toolbar = self.createToolbar()
 
@@ -1181,7 +1181,7 @@ class MiniEdit( Frame ):
         self.doStop()
         Frame.quit( self )
 
-    def createMenubar( self ): # MODIFICADO - OK
+    def createMenubar( self ):
         "Create our menu bar."
 
         font = self.font
@@ -1283,7 +1283,6 @@ class MiniEdit( Frame ):
         # Activate dynamic bindings
         self.active = toolName
 
-
     def createToolTip(self, widget, text):
         toolTip = ToolTip(widget)
         def enter(event):
@@ -1297,7 +1296,7 @@ class MiniEdit( Frame ):
         "Create and return our toolbar frame."
 
         toolbar = Frame( self )
-
+        #pdb.set_trace()
         # Tools
         for tool in self.tools:
             cmd = ( lambda t=tool: self.activate( t ) )
@@ -1430,6 +1429,7 @@ class MiniEdit( Frame ):
             if 'getMetrics' in rOpts:
                 getMetrics=rOpts['getMetrics']
                 template.write('getMetrics=' + repr(getMetrics) + ' ')
+                hasOpt='True'
             if 'fibEntries' in rOpts:
                 customFib = self.parseList(rOpts['fibEntries'])
                 template.write(customFib)
@@ -1765,7 +1765,7 @@ class MiniEdit( Frame ):
                 self.createControlLinkBindings()
                 self.link = self.linkWidget = None
 
-    # Load routers
+        # Load routers
         routers = loadedTopology['routers']
         for router in routers:
             nodeNum = router['number']
@@ -2126,7 +2126,8 @@ class MiniEdit( Frame ):
 
     def clickNode( self, event ):
         "Node click handler."
-        if self.active is 'NetLink':
+        #pdb.set_trace()
+        if self.active == 'NetLink':
             self.startLink( event )
         else:
             self.selectNode( event )
@@ -2974,6 +2975,7 @@ class MiniEdit( Frame ):
 
         #topo = CCNTopo(temp_template)
         #executes miniccnx method to build and run everything
+        #pdb.set_trace()
         self.net = execute(template_file=temp_file, fromGUI = True)
         os.remove(temp_file)
 
