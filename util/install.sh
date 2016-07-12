@@ -142,11 +142,11 @@ function install_ccnx () {
             sudo sed 's/\< restricted\>//'g /etc/apt/sources.list > /etc/apt/sources.list2
             sudo rm /etc/apt/sources.list
             sudo mv /etc/apt/sources.list2 /etc/apt/sources.list
-            sudo add-apt-repository ppa:openjdk-r/ppa 
+            sudo add-apt-repository ppa:webupd8team/java
             sudo apt-get update
 	        $install libssl-dev libexpat1-dev libpcap-dev libxml2-utils \
 		    vlc wireshark ant git-core gcc python-software-properties\
-		    athena-jot python-dev make wget openjdk-7-jdk 
+		    athena-jot python-dev make wget oracle-java7-installer 
         else
 	        sudo apt-get update
 	        $install libssl-dev libexpat1-dev libpcap-dev libxml2-utils \
@@ -176,7 +176,7 @@ function install_influxDB () {
     echo "deb https://repos.influxdata.com/${DISTRIB_ID,,} ${DISTRIB_CODENAME} stable" | sudo tee /etc/apt/sources.list.d/influxdb.list
     sudo apt-get update && sudo apt-get install influxdb python-pip
     sudo pip install influxdb
-    sudo pip install --upgrade influxdb
+    #sudo pip install --upgrade influxdb
 
     echo "InfluxDB installed successfully. Starting daemon..."
     sudo service influxdb restart
@@ -205,7 +205,7 @@ function kernel_clean {
 
 # Install Mini deps
 function mn_deps {
-    #set -x
+
     install_ccnx
     install_influxDB
     install_ccnping 
@@ -844,7 +844,6 @@ if [ $# -eq 0 ]
 then
     all
 else
-    set -x
     while getopts 'abcdefhikmnprs:tvV:wxy03' OPTION
     do
       case $OPTION in
