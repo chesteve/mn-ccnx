@@ -10,7 +10,7 @@ import sys
 sys.path.append( '.' )
 from mininet.net import VERSION
 
-scripts = [ join( 'bin', filename ) for filename in [ 'miniccnx', 'miniccnxedit' ] ]
+scripts = [ join( 'bin', filename ) for filename in [ 'mn', 'miniccnx', 'miniccnxedit'] ]
 
 modname = distname = 'mininet'
 
@@ -39,8 +39,8 @@ setup(
     keywords='networking emulator protocol Internet OpenFlow SDN CCNx CCN',
     license='BSD',
     install_requires=[
-        'setuptools',
-        'networkx'
+        'setuptools', 
+	'networkx'
     ],
     scripts=scripts,
 )

@@ -8,6 +8,8 @@ multiple hosts and monitor their output interactively for a period=
 of time.
 """
 
+from __future__ import print_function
+
 from mininet.net import Mininet
 from mininet.node import Node
 from mininet.topo import SingleSwitchTopo
@@ -23,12 +25,7 @@ def chunks( l, n ):
 def startpings( host, targetips ):
     "Tell host to repeatedly ping targets"
 
-    targetips.append( '10.0.0.200' )
-
     targetips = ' '.join( targetips )
-
-    # BL: Not sure why loopback intf isn't up!
-    host.cmd( 'ifconfig lo up' )
 
     # Simple ping loop
     cmd = ( 'while true; do '
@@ -39,7 +36,7 @@ def startpings( host, targetips ):
             ' done; '
             'done &' )
 
-    print ( '*** Host %s (%s) will be pinging ips: %s' %
+    print( '*** Host %s (%s) will be pinging ips: %s' %
             ( host.name, host.IP(), targetips ) )
 
     host.cmd( cmd )
@@ -63,6 +60,8 @@ def multiping( netsize, chunksize, seconds):
     # Start pings
     for subnet in subnets:
         ips = [ host.IP() for host in subnet ]
+        #adding bogus to generate packet loss
+        ips.append( '10.0.0.200' )
         for host in subnet:
             startpings( host, ips )
 
@@ -72,7 +71,7 @@ def multiping( netsize, chunksize, seconds):
         readable = poller.poll(1000)
         for fd, _mask in readable:
             node = Node.outToNode[ fd ]
-            print '%s:' % node.name, node.monitor().strip()
+            print( '%s:' % node.name, node.monitor().strip() )
 
     # Stop pings
     for host in hosts:

@@ -5,7 +5,7 @@
  *
  *  - closing all file descriptors except stdin/out/error
  *  - detaching from a controlling tty using setsid
- *  - running in a network namespace
+ *  - running in network and mount namespaces
  *  - printing out the pid of a process so we can identify it later
  *  - attaching to a namespace and cgroup
  *  - setting RT scheduling
@@ -13,6 +13,7 @@
  * Partially based on public domain setsid(1)
 */
 
+#define _GNU_SOURCE
 #include <stdio.h>
 #include <linux/sched.h>
 #include <unistd.h>
@@ -20,23 +21,24 @@
 #include <syscall.h>
 #include <fcntl.h>
 #include <stdlib.h>
-#include <limits.h>
 #include <sched.h>
+#include <ctype.h>
+#include <sys/mount.h>
 
 #if !defined(VERSION)
 #define VERSION "(devel)"
 #endif
 
-void usage(char *name) 
+void usage(char *name)
 {
     printf("Execution utility for Mininet\n\n"
            "Usage: %s [-cdnp] [-a pid] [-g group] [-r rtprio] cmd args...\n\n"
            "Options:\n"
            "  -c: close all file descriptors except stdin/out/error\n"
            "  -d: detach from tty by calling setsid()\n"
-           "  -n: run in new network namespace\n"
+           "  -n: run in new network and mount namespaces\n"
            "  -p: print ^A + pid\n"
-           "  -a pid: attach to pid's network namespace\n"
+           "  -a pid: attach to pid's network and mount namespaces\n"
            "  -g group: add to cgroup\n"
            "  -r rtprio: run with SCHED_RR (usually requires -g)\n"
            "  -v: print version\n",
@@ -46,7 +48,7 @@ void usage(char *name)
 
 int setns(int fd, int nstype)
 {
-	return syscall(308, fd, nstype);
+    return syscall(__NR_setns, fd, nstype);
 }
 
 /* Validate alphanumeric path foo1/bar2/baz */
@@ -62,7 +64,7 @@ void validate(char *path)
 }
 
 /* Add our pid to cgroup */
-int cgroup(char *gname)
+void cgroup(char *gname)
 {
     static char path[PATH_MAX];
     static char *groups[] = {
@@ -92,11 +94,13 @@ int cgroup(char *gname)
 
 int main(int argc, char *argv[])
 {
-    char c;
+    int c;
     int fd;
     char path[PATH_MAX];
     int nsid;
     int pid;
+    char *cwd = get_current_dir_name();
+
     static struct sched_param sp;
     while ((c = getopt(argc, argv, "+cdnpa:g:r:vh")) != -1)
         switch(c) {
@@ -112,18 +116,33 @@ int main(int argc, char *argv[])
                     case -1:
                         perror("fork");
                         return 1;
-                    case 0:		/* child */
+                    case 0:     /* child */
                         break;
-                    default:	/* parent */
+                    default:    /* parent */
                         return 0;
                 }
             }
             setsid();
             break;
         case 'n':
-            /* run in network namespace */
-            if (unshare(CLONE_NEWNET) == -1) {
+            /* run in network and mount namespaces */
+            if (unshare(CLONE_NEWNET|CLONE_NEWNS) == -1) {
                 perror("unshare");
+                return 1;
+            }
+
+            /* Mark our whole hierarchy recursively as private, so that our
+             * mounts do not propagate to other processes.
+             */
+
+            if (mount("none", "/", NULL, MS_REC|MS_PRIVATE, NULL) == -1) {
+                perror("remount");
+                return 1;
+            }
+
+            /* mount sysfs to pick up the new network namespace */
+            if (mount("sysfs", "/sys", "sysfs", MS_MGC_VAL, NULL) == -1) {
+                perror("mount");
                 return 1;
             }
             break;
@@ -133,9 +152,9 @@ int main(int argc, char *argv[])
             fflush(stdout);
             break;
         case 'a':
-            /* Attach to pid's network namespace */
+            /* Attach to pid's network namespace and mount namespace */
             pid = atoi(optarg);
-            sprintf(path, "/proc/%d/ns/net", pid );
+            sprintf(path, "/proc/%d/ns/net", pid);
             nsid = open(path, O_RDONLY);
             if (nsid < 0) {
                 perror(path);
@@ -143,6 +162,22 @@ int main(int argc, char *argv[])
             }
             if (setns(nsid, 0) != 0) {
                 perror("setns");
+                return 1;
+            }
+            /* Plan A: call setns() to attach to mount namespace */
+            sprintf(path, "/proc/%d/ns/mnt", pid);
+            nsid = open(path, O_RDONLY);
+            if (nsid < 0 || setns(nsid, 0) != 0) {
+                /* Plan B: chroot/chdir into pid's root file system */
+                sprintf(path, "/proc/%d/root", pid);
+                if (chroot(path) < 0) {
+                    perror(path);
+                    return 1;
+                }
+            }
+            /* chdir to correct working directory */
+            if (chdir(cwd) != 0) {
+                perror(cwd);
                 return 1;
             }
             break;
@@ -166,7 +201,7 @@ int main(int argc, char *argv[])
             exit(0);
         default:
             usage(argv[0]);
-            exit(1); 
+            exit(1);
         }
 
     if (optind < argc) {
@@ -174,6 +209,8 @@ int main(int argc, char *argv[])
         perror(argv[optind]);
         return 1;
     }
-    
+
     usage(argv[0]);
+
+    return 0;
 }

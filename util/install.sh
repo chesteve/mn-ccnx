@@ -29,7 +29,7 @@ KERNEL_LOC=http://www.openflow.org/downloads/mininet
 DIST=Unknown
 RELEASE=Unknown
 CODENAME=Unknown
-ARCH=`uname -m`
+ARCH=$(uname -m)
 if [ "$ARCH" = "x86_64" ]; then ARCH="amd64"; fi
 if [ "$ARCH" = "i686" ]; then ARCH="i386"; fi
 
@@ -166,8 +166,8 @@ function install_influxDB () {
           	fi
 
 	    pushd "$INFLUX_DIR"
-	    sudo wget https://s3.amazonaws.com/influxdb/influxdb_latest_amd64.deb
-            sudo dpkg -i influxdb_latest_amd64.deb
+	    wget https://dl.influxdata.com/influxdb/releases/influxdb_0.13.0_amd64.deb
+	    sudo dpkg -i influxdb_0.13.0_amd64.deb 
 	    sudo wget https://bootstrap.pypa.io/get-pip.py 
 	    sudo python get-pip.py
 	    sudo pip install influxdb
@@ -210,14 +210,14 @@ function mn_deps {
     install_influxDB
     install_ccnping 
     echo "Installing Mininet dependencies"
-    if [ "$DIST" = "Fedora" ]; then
+    if [ "$DIST" = "Fedora" -o "$DIST" = "RedHatEnterpriseServer" ]; then
         $install gcc make socat psmisc xterm openssh-clients iperf \
             iproute telnet python-setuptools libcgroup-tools \
-            ethtool help2man pyflakes pylint python-pep8
+            ethtool help2man pyflakes pylint python-pep8 python-pexpect
     else
         $install gcc make socat psmisc xterm ssh iperf iproute telnet \
             python-setuptools cgroup-bin ethtool help2man \
-            pyflakes pylint pep8
+            pyflakes pylint pep8 python-pexpect
     fi
 
     echo "Installing Mininet core"

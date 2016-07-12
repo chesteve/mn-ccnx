@@ -1,10 +1,9 @@
-
 Mininet: Rapid Prototyping for Software Defined Networks
 ========================================================
 
 *The best way to emulate almost any network on your laptop!*
 
-Version 2.0.0
+Mininet 2.3.0d1
 
 ### What is Mininet?
 
@@ -67,32 +66,27 @@ Mininet includes:
 
   `mn -c`
 
-### New features in 2.0.0
+### New features in this release
 
-Mininet 2.0.0 is a major upgrade and provides
-a number of enhancements and new features, including:
+This is primarily a performance improvement and bug fix release.
 
-* "Mininet-HiFi" functionality:
+- Batch startup has been implemented for Open vSwitch, improving
+  startup performance.
 
-    * Link bandwidth limits using `tc` (`TCIntf` and `TCLink` classes)
+- OVS patch links have been implemented via OVSLink and --link ovs
 
-    * CPU isolation and bandwidth limits (`CPULimitedHost` class)
+  Warning! These links have *serious limitations* compared to
+  virtual Ethernet pairs: they are not attached to real Linux
+  interfaces so you cannot use tcpdump or wireshark with them;
+  they also cannot be used in long chains - we don't recommend more
+  than 64 OVSLinks, for example --linear,64. However, they can offer
+  significantly better performance than veth pairs, for certain
+  configurations.
 
-* Support for Open vSwitch 1.4+ (including Ubuntu OVS packages)
+- You can now easily install Mininet on a Raspberry Pi ;-)
 
-* Debian packaging (and `apt-get install mininet` in Ubuntu 12.10)
-
-* First-class Interface (`Intf`) and Link (`Link`) classes for easier
-  extensibility
-
-* An upgraded Topology (`Topo`) class which supports node and link
-  customization
-
-* Man pages for the `mn` and `mnexec` utilities.
-
-[Since the API (most notably the topology) has changed, existing code
-that runs in Mininet 1.0 will need to be changed to run with Mininet
-2.0. This is the primary reason for the major version number change.]
+- Additional information for this release and previous releases
+  may be found in the release notes on docs.mininet.org
 
 ### Installation
 
@@ -103,7 +97,7 @@ See `INSTALL` for installation instructions and details.
 In addition to the API documentation (`make doc`), much useful
 information, including a Mininet walkthrough and an introduction
 to the Python API, is available on the
-[Mininet Web Site](http://openflow.org/mininet).
+[Mininet Web Site](http://mininet.org).
 There is also a wiki which you are encouraged to read and to
 contribute to, particularly the Frequently Asked Questions (FAQ.)
 
@@ -114,21 +108,22 @@ Mininet mailing list, `mininet-discuss` at:
 
 <https://mailman.stanford.edu/mailman/listinfo/mininet-discuss>
 
-### Contributing
+### Join Us
 
-Mininet is an open-source project and is currently hosted at
-<https://github.com/mininet>. You are encouraged to download the code,
-examine it, modify it, and submit bug reports, bug fixes, feature
-requests, and enhancements!
+Thanks again to all of the Mininet contributors!
+
+Mininet is an open source project and is currently hosted
+at <https://github.com/mininet>.  You are encouraged to download
+the code, examine it, modify it, and submit bug reports, bug fixes,
+feature requests, new features and other issues and pull requests.
+Thanks to everyone who has contributed code to the Mininet project
+(see CONTRIBUTORS for more info!) It is because of everyone's
+hard work that Mininet continues to grow and improve.
+
+### Enjoy Mininet
 
 Best wishes, and we look forward to seeing what you can do with
 Mininet to change the networking world!
 
-### Credits
-
-The Mininet Team:
-
-* Bob Lantz
-* Brandon Heller
-* Nikhil Handigol
-* Vimal Jeyakumar
+Bob Lantz
+Mininet Core Team

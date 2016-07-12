@@ -145,17 +145,42 @@ isShellBuiltin.builtIns = None
 # live in the root namespace and thus do not have to be
 # explicitly moved.
 
-def makeIntfPair( intf1, intf2 ):
-    """Make a veth pair connecting intf1 and intf2.
-       intf1: string, interface
-       intf2: string, interface
-       returns: success boolean"""
-    # Delete any old interfaces with the same names
-    quietRun( 'ip link del ' + intf1 )
-    quietRun( 'ip link del ' + intf2 )
+def makeIntfPair( intf1, intf2, addr1=None, addr2=None, node1=None, node2=None,
+                  deleteIntfs=True, runCmd=None ):
+    """Make a veth pair connnecting new interfaces intf1 and intf2
+       intf1: name for interface 1
+       intf2: name for interface 2
+       addr1: MAC address for interface 1 (optional)
+       addr2: MAC address for interface 2 (optional)
+       node1: home node for interface 1 (optional)
+       node2: home node for interface 2 (optional)
+       deleteIntfs: delete intfs before creating them
+       runCmd: function to run shell commands (quietRun)
+       raises Exception on failure"""
+    if not runCmd:
+        runCmd = quietRun if not node1 else node1.cmd
+        runCmd2 = quietRun if not node2 else node2.cmd
+    if deleteIntfs:
+        # Delete any old interfaces with the same names
+        runCmd( 'ip link del ' + intf1 )
+        runCmd2( 'ip link del ' + intf2 )
     # Create new pair
-    cmd = 'ip link add name ' + intf1 + ' type veth peer name ' + intf2
-    return quietRun( cmd )
+    netns = 1 if not node2 else node2.pid
+    if addr1 is None and addr2 is None:
+        cmdOutput = runCmd( 'ip link add name %s '
+                            'type veth peer name %s '
+                            'netns %s' % ( intf1, intf2, netns ) )
+    else:
+        cmdOutput = runCmd( 'ip link add name %s '
+                            'address %s '
+                            'type veth peer name %s '
+                            'address %s '
+                            'netns %s' %
+                            (  intf1, addr1, intf2, addr2, netns ) )
+    if cmdOutput:
+        raise Exception( "Error creating interface pair (%s,%s): %s " %
+                         ( intf1, intf2, cmdOutput ) )
+
 
 def retry( retries, delaySecs, fn, *args, **keywords ):
     """Try something several times before giving up.
@@ -452,6 +477,54 @@ def customConstructor( constructors, argStr ):
 
     customized.__name__ = 'customConstructor(%s)' % argStr
     return customized
+
+def customClass( classes, argStr ):
+    """Return customized class based on argStr
+    The args and key/val pairs in argStr will be automatically applied
+    when the generated class is later used.
+    """
+    cname, args, kwargs = splitArgs( argStr )
+    cls = classes.get( cname, None )
+    if not cls:
+        raise Exception( "error: %s is unknown - please specify one of %s" %
+                         ( cname, classes.keys() ) )
+    if not args and not kwargs:
+        return cls
+
+    return specialClass( cls, append=args, defaults=kwargs )
+
+def specialClass( cls, prepend=None, append=None,
+                  defaults=None, override=None ):
+    """Like functools.partial, but it returns a class
+       prepend: arguments to prepend to argument list
+       append: arguments to append to argument list
+       defaults: default values for keyword arguments
+       override: keyword arguments to override"""
+
+    if prepend is None:
+        prepend = []
+
+    if append is None:
+        append = []
+
+    if defaults is None:
+        defaults = {}
+
+    if override is None:
+        override = {}
+
+    class CustomClass( cls ):
+        "Customized subclass with preset args/params"
+        def __init__( self, *args, **params ):
+            newparams = defaults.copy()
+            newparams.update( params )
+            newparams.update( override )
+            cls.__init__( self, *( list( prepend ) + list( args ) +
+                                   list( append ) ),
+                          **newparams )
+
+    CustomClass.__name__ = '%s%s' % ( cls.__name__, defaults )
+    return CustomClass
 
 def buildTopo( topos, topoStr ):
     """Create topology from string with format (object, arg1, arg2,...).

@@ -338,20 +338,22 @@ class Node( object ):
             return max( self.ports.values() ) + 1
         return self.portBase
 
-    def addIntf( self, intf, port=None ):
+    def addIntf( self, intf, port=None, moveIntfFn=moveIntf ):
         """Add an interface.
            intf: interface
-           port: port number (optional, typically OpenFlow port number)"""
+           port: port number (optional, typically OpenFlow port number)
+           moveIntfFn: function to move interface (optional)"""
         if port is None:
             port = self.newPort()
         self.intfs[ port ] = intf
         self.ports[ intf ] = port
         self.nameToIntf[ intf.name ] = intf
         debug( '\n' )
-        debug( 'added intf %s:%d to node %s\n' % ( intf, port, self.name ) )
+        debug( 'added intf %s (%d) to node %s\n' % (
+                intf, port, self.name ) )
         if self.inNamespace:
             debug( 'moving', intf, 'into namespace for', self.name, '\n' )
-            moveIntf( intf.name, self )
+            moveIntfFn( intf.name, self  )
 
     def defaultIntf( self ):
         "Return interface for lowest port"
@@ -1126,6 +1128,98 @@ class OVSSwitch( Switch ):
 
 OVSKernelSwitch = OVSSwitch
 
+class OVSBridge( OVSSwitch ):
+    "OVSBridge is an OVSSwitch in standalone/bridge mode"
+
+    def __init__( self, *args, **kwargs ):
+        """stp: enable Spanning Tree Protocol (False)
+           see OVSSwitch for other options"""
+        kwargs.update( failMode='standalone' )
+        OVSSwitch.__init__( self, *args, **kwargs )
+
+    def start( self, controllers ):
+        "Start bridge, ignoring controllers argument"
+        OVSSwitch.start( self, controllers=[] )
+
+    def connected( self ):
+        "Are we forwarding yet?"
+        if self.stp:
+            status = self.dpctl( 'show' )
+            return 'STP_FORWARD' in status and not 'STP_LEARN' in status
+        else:
+            return True
+
+
+class IVSSwitch( Switch ):
+    "Indigo Virtual Switch"
+
+    def __init__( self, name, verbose=False, **kwargs ):
+        Switch.__init__( self, name, **kwargs )
+        self.verbose = verbose
+
+    @classmethod
+    def setup( cls ):
+        "Make sure IVS is installed"
+        pathCheck( 'ivs-ctl', 'ivs',
+                   moduleName="Indigo Virtual Switch (projectfloodlight.org)" )
+        out, err, exitcode = errRun( 'ivs-ctl show' )
+        if exitcode:
+            error( out + err +
+                   'ivs-ctl exited with code %d\n' % exitcode +
+                   '*** The openvswitch kernel module might '
+                   'not be loaded. Try modprobe openvswitch.\n' )
+            exit( 1 )
+
+    @classmethod
+    def batchShutdown( cls, switches ):
+        "Kill each IVS switch, to be waited on later in stop()"
+        for switch in switches:
+            switch.cmd( 'kill %ivs' )
+        return switches
+
+    def start( self, controllers ):
+        "Start up a new IVS switch"
+        args = ['ivs']
+        args.extend( ['--name', self.name] )
+        args.extend( ['--dpid', self.dpid] )
+        if self.verbose:
+            args.extend( ['--verbose'] )
+        for intf in self.intfs.values():
+            if not intf.IP():
+                args.extend( ['-i', intf.name] )
+        for c in controllers:
+            args.extend( ['-c', '%s:%d' % (c.IP(), c.port)] )
+        if self.listenPort:
+            args.extend( ['--listen', '127.0.0.1:%i' % self.listenPort] )
+        args.append( self.opts )
+
+        logfile = '/tmp/ivs.%s.log' % self.name
+
+        self.cmd( ' '.join(args) + ' >' + logfile + ' 2>&1 </dev/null &' )
+
+    def stop( self, deleteIntfs=True ):
+        """Terminate IVS switch.
+           deleteIntfs: delete interfaces? (True)"""
+        self.cmd( 'kill %ivs' )
+        self.cmd( 'wait' )
+        super( IVSSwitch, self ).stop( deleteIntfs )
+
+    def attach( self, intf ):
+        "Connect a data port"
+        self.cmd( 'ivs-ctl', 'add-port', '--datapath', self.name, intf )
+
+    def detach( self, intf ):
+        "Disconnect a data port"
+        self.cmd( 'ivs-ctl', 'del-port', '--datapath', self.name, intf )
+
+    def dpctl( self, *args ):
+        "Run dpctl command"
+        if not self.listenPort:
+            return "can't run dpctl without passive listening port"
+        return self.cmd( 'ovs-ofctl ' + ' '.join( args ) +
+                         ' tcp:127.0.0.1:%i' % self.listenPort )
+
+
 
 class Controller( Node ):
     """A Controller is a Node that is running (or has execed?) an
@@ -1224,6 +1318,27 @@ class NOX( Controller ):
                              cdir=noxCoreDir,
                              **kwargs )
 
+class Ryu( Controller ):
+    "Controller to run Ryu application"
+    def __init__( self, name, *ryuArgs, **kwargs ):
+        """Init.
+        name: name to give controller.
+        ryuArgs: arguments and modules to pass to Ryu"""
+        homeDir = quietRun( 'printenv HOME' ).strip( '\r\n' )
+        ryuCoreDir = '%s/ryu/ryu/app/' % homeDir
+        if not ryuArgs:
+            warn( 'warning: no Ryu modules specified; '
+                  'running simple_switch only\n' )
+            ryuArgs = [ ryuCoreDir + 'simple_switch.py' ]
+        elif type( ryuArgs ) not in ( list, tuple ):
+            ryuArgs = [ ryuArgs ]
+
+        Controller.__init__( self, name,
+                             command='ryu-manager',
+                             cargs='--ofp-tcp-listen-port %s ' +
+                             ' '.join( ryuArgs ),
+                             cdir=ryuCoreDir,
+                             **kwargs )
 
 class RemoteController( Controller ):
     "Controller running outside of Mininet's control."
@@ -1252,3 +1367,31 @@ class RemoteController( Controller ):
         if 'Unable' in listening:
             warn( "Unable to contact the remote controller"
                   " at %s:%d\n" % ( self.ip, self.port ) )
+    def isListening( self, ip, port ):
+        "Check if a remote controller is listening at a specific ip and port"
+        listening = self.cmd( "echo A | telnet -e A %s %d" % ( ip, port ) )
+        if 'Connected' not in listening:
+            warn( "Unable to contact the remote controller"
+                  " at %s:%d\n" % ( ip, port ) )
+            return False
+        else:
+            return True
+
+DefaultControllers = ( Controller, OVSController )
+
+def findController( controllers=DefaultControllers ):
+    "Return first available controller from list, if any"
+    for controller in controllers:
+        if controller.isAvailable():
+            return controller
+
+def DefaultController( name, controllers=DefaultControllers, **kwargs ):
+    "Find a controller that is available and instantiate it"
+    controller = findController( controllers )
+    if not controller:
+        raise Exception( 'Could not find a default OpenFlow controller' )
+    return controller( name, **kwargs )
+
+def NullController( *_args, **_kwargs ):
+    "Nonexistent controller - simply returns None"
+    return None

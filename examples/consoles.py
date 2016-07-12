@@ -315,11 +315,19 @@ class ConsoleApp( Frame ):
 
     def updateGraph( self, _console, output ):
         "Update our graph."
-        m = re.search( r'(\d+) Mbits/sec', output )
+        m = re.search( r'(\d+.?\d*) ([KMG]?bits)/sec', output )
         if not m:
             return
+        val, units = float( m.group( 1 ) ), m.group( 2 )
+        #convert to Gbps
+        if units[0] == 'M':
+            val *= 10 ** -3
+        elif units[0] == 'K':
+            val *= 10 ** -6
+        elif units[0] == 'b':
+            val *= 10 ** -9
         self.updates += 1
-        self.bw += .001 * float( m.group( 1 ) )
+        self.bw += val
         if self.updates >= self.hostCount:
             self.graph.addBar( self.bw )
             self.bw = 0
@@ -410,7 +418,9 @@ class ConsoleApp( Frame ):
         count = len( consoles )
         self.setOutputHook( self.updateGraph )
         for console in consoles:
-            console.node.cmd( 'iperf -sD' )
+            # Sometimes iperf -sD doesn't return,
+            # so we run it in the background instead
+            console.node.cmd( 'iperf -s &' )
         i = 0
         for console in consoles:
             i = ( i + 1 ) % count

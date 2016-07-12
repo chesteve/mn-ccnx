@@ -17,7 +17,6 @@ Each host has:
 A virtual console (pipes to a shell)
 A virtual interfaces (half of a veth pair)
 A parent shell (and possibly some child processes) in a namespace
-
 Hosts have a network interface which is configured via ifconfig/ip
 link/etc.
 
@@ -104,7 +103,7 @@ from sources.metrics import MetricsCollector
 import pdb
 
 # Mininet version: should be consistent with README and LICENSE
-VERSION = "2.0.0"
+VERSION = "2.3.0d1"
 
 class Mininet( object ):
     "Network emulation with hosts spawned in network namespaces."
@@ -252,6 +251,7 @@ class Mininet( object ):
             port1: source port
             port2: dest port
             returns: link object"""
+        
         defaults = { 'port1': port1,
                      'port2': port2,
                      'intf': self.intf }
@@ -317,6 +317,7 @@ class Mininet( object ):
                 info( switchName + ' ' )
 
         info( '\n*** Adding links:\n' )
+	#pdb.set_trace()
         for srcName, dstName in topo.links(sort=True):
             src, dst = self.nameToNode[ srcName ], self.nameToNode[ dstName ]
             params = topo.linkInfo( srcName, dstName )

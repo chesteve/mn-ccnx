@@ -56,8 +56,8 @@ from sources.miniccnx import CCNTopo, execute
 
 print 'MiniCCNxEdit running...' #+VERSION
 MININET_VERSION = re.sub(r'[^\d\.]', '', VERSION)
-if StrictVersion(MININET_VERSION) > StrictVersion('2.0'):
-    from mininet.node import IVSSwitch
+#if StrictVersion(MININET_VERSION) > StrictVersion('2.0'):
+#    from mininet.node import IVSSwitch
 
 TOPODEF = 'none'
 TOPOS = { 'minimal': lambda: SingleSwitchTopo( k=2 ),
@@ -3135,13 +3135,14 @@ class MiniEdit( Frame ):
              self.selection not in self.itemToWidget ):
             return
         name = self.itemToWidget[ self.selection ][ 'text' ]
+	#pdb.set_trace()
         if name not in self.net.nameToNode:
             return
         term = makeTerm( self.net.nameToNode[ name ], 'Host', term=self.appPrefs['terminalType'] )
-        if StrictVersion(MININET_VERSION) > StrictVersion('2.0'):
-            self.net.terms += term
-        else:
-            self.net.terms.append(term)
+        #if StrictVersion(MININET_VERSION) > StrictVersion('2.0'):
+            #self.net.terms += term
+        #else:
+        self.net.terms.append(term)
 
     def iperf( self, _ignore=None ):
         "Make an xterm when a button is pressed."

@@ -214,6 +214,11 @@ class SingleSwitchReversedTopo(Topo):
             self.addLink(host, switch,
                          port1=0, port2=(k - h + 1))
 
+class MinimalTopo( SingleSwitchTopo ):
+    "Minimal topology with two hosts and one switch"
+    def build( self ):
+        return SingleSwitchTopo.build( self, k=2 )
+
 class LinearTopo(Topo):
     "Linear topology of k switches, with one host per switch."
 

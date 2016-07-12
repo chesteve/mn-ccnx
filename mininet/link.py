@@ -26,14 +26,15 @@ Link: basic link class for creating veth pairs
 
 from mininet.log import info, error, debug
 from mininet.util import makeIntfPair
-from time import sleep
+import mininet.node
 import re
 
 class Intf( object ):
 
     "Basic interface object that can configure itself."
 
-    def __init__( self, name, node=None, port=None, link=None, **params ):
+    def __init__( self, name, node=None, port=None, link=None,
+                  mac=None, **params ):
         """name: interface name (e.g. h1-eth0)
            node: owning node (where this intf most likely lives)
            link: parent link if we're part of a link
@@ -41,9 +42,20 @@ class Intf( object ):
         self.node = node
         self.name = name
         self.link = link
-        self.mac, self.ip, self.prefixLen = None, None, None
+        self.mac = mac
+        self.ip, self.prefixLen = None, None
+
+        # if interface is lo, we know the ip is 127.0.0.1.
+        # This saves an ifconfig command per node
+        if self.name == 'lo':
+            self.ip = '127.0.0.1'
+            self.prefixLen = 8
         # Add to node (and move ourselves if necessary )
-        node.addIntf( self, port=port )
+        moveIntfFn = params.pop( 'moveIntfFn', None )
+        if moveIntfFn:
+            node.addIntf( self, port=port, moveIntfFn=moveIntfFn )
+        else:
+            node.addIntf( self, port=port )
         # Save params for future reference
         self.params = params
         self.config( **params )
@@ -64,6 +76,9 @@ class Intf( object ):
             self.ip, self.prefixLen = ipstr.split( '/' )
             return self.ifconfig( ipstr, 'up' )
         else:
+            if prefixLen is None:
+                raise Exception( 'No prefix length set for IP address %s'
+                                 % ( ipstr, ) )
             self.ip, self.prefixLen = ipstr, prefixLen
             return self.ifconfig( '%s/%s' % ( ipstr, prefixLen ) )
 
@@ -80,7 +95,10 @@ class Intf( object ):
 
     def updateIP( self ):
         "Return updated IP address based on ifconfig"
-        ifconfig = self.ifconfig()
+        # use pexec instead of node.cmd so that we dont read
+        # backgrounded output from the cli.
+        ifconfig, _err, _exitCode = self.node.pexec(
+            'ifconfig %s' % self.name )
         ips = self._ipMatchRegex.findall( ifconfig )
         self.ip = ips[ 0 ] if ips else None
         return self.ip
@@ -91,6 +109,19 @@ class Intf( object ):
         macs = self._macMatchRegex.findall( ifconfig )
         self.mac = macs[ 0 ] if macs else None
         return self.mac
+
+    # Instead of updating ip and mac separately,
+    # use one ifconfig call to do it simultaneously.
+    # This saves an ifconfig command, which improves performance.
+
+    def updateAddr( self ):
+        "Return IP address and MAC address based on ifconfig."
+        ifconfig = self.ifconfig()
+        ips = self._ipMatchRegex.findall( ifconfig )
+        macs = self._macMatchRegex.findall( ifconfig )
+        self.ip = ips[ 0 ] if ips else None
+        self.mac = macs[ 0 ] if macs else None
+        return self.ip, self.mac
 
     def IP( self ):
         "Return IP address"
@@ -103,8 +134,15 @@ class Intf( object ):
     def isUp( self, setUp=False ):
         "Return whether interface is up"
         if setUp:
-            self.ifconfig( 'up' )
-        return "UP" in self.ifconfig()
+            cmdOutput = self.ifconfig( 'up' )
+            # no output indicates success
+            if cmdOutput:
+                error( "Error setting %s up: %s " % ( self.name, cmdOutput ) )
+                return False
+            else:
+                return True
+        else:
+            return "UP" in self.ifconfig()
 
     def rename( self, newname ):
         "Rename interface"
@@ -130,9 +168,9 @@ class Intf( object ):
         f = getattr( self, method, None )
         if not f or value is None:
             return
-        if type( value ) is list:
+        if isinstance( value, list ):
             result = f( *value )
-        elif type( value ) is dict:
+        elif isinstance( value, dict ):
             result = f( **value )
         else:
             result = f( value )
@@ -155,15 +193,23 @@ class Intf( object ):
         self.setParam( r, 'setIP', ip=ip )
         self.setParam( r, 'isUp', up=up )
         self.setParam( r, 'ifconfig', ifconfig=ifconfig )
-        self.updateIP()
-        self.updateMAC()
         return r
 
     def delete( self ):
         "Delete interface"
         self.cmd( 'ip link del ' + self.name )
-        # Does it help to sleep to let things run?
-        sleep( 0.001 )
+        # We used to do this, but it slows us down:
+        # if self.node.inNamespace:
+        # Link may have been dumped into root NS
+        # quietRun( 'ip link del ' + self.name )
+
+    def status( self ):
+        "Return intf status as a string"
+        links, _err, _result = self.node.pexec( 'ip link show' )
+        if self.name in links:
+            return "OK"
+        else:
+            return "MISSING"
 
     def __repr__( self ):
         return '<%s %s>' % ( self.__class__.__name__, self.name )
@@ -177,16 +223,19 @@ class TCIntf( Intf ):
        Allows specification of bandwidth limits (various methods)
        as well as delay, loss and max queue length"""
 
+    # The parameters we use seem to work reasonably up to 1 Gb/sec
+    # For higher data rates, we will probably need to change them.
+    bwParamMax = 1000
+
     def bwCmds( self, bw=None, speedup=0, use_hfsc=False, use_tbf=False,
                 latency_ms=None, enable_ecn=False, enable_red=False ):
         "Return tc commands to set bandwidth"
 
-
         cmds, parent = [], ' root '
 
-        if bw and ( bw < 0 or bw > 1000 ):
-            error( 'Bandwidth', bw, 'is outside range 0..1000 Mbps\n' )
-
+        if bw and ( bw < 0 or bw > self.bwParamMax ):
+            error( 'Bandwidth limit', bw, 'is outside supported range 0..%d'
+                   % self.bwParamMax, '- ignoring\n' )
         elif bw is not None:
             # BL: this seems a bit brittle...
             if ( speedup > 0 and
@@ -197,43 +246,42 @@ class TCIntf( Intf ):
             # are specifying the correct sizes. For now I have used
             # the same settings we had in the mininet-hifi code.
             if use_hfsc:
-                cmds += [ '%s qdisc add dev %s root handle 1:0 hfsc default 1',
-                          '%s class add dev %s parent 1:0 classid 1:1 hfsc sc '
+                cmds += [ '%s qdisc add dev %s root handle 5:0 hfsc default 1',
+                          '%s class add dev %s parent 5:0 classid 5:1 hfsc sc '
                           + 'rate %fMbit ul rate %fMbit' % ( bw, bw ) ]
             elif use_tbf:
                 if latency_ms is None:
                     latency_ms = 15 * 8 / bw
-                cmds += [ '%s qdisc add dev %s root handle 1: tbf ' +
+                cmds += [ '%s qdisc add dev %s root handle 5: tbf ' +
                           'rate %fMbit burst 15000 latency %fms' %
                           ( bw, latency_ms ) ]
             else:
-                cmds += [ '%s qdisc add dev %s root handle 1:0 htb default 1',
-                          '%s class add dev %s parent 1:0 classid 1:1 htb ' +
+                cmds += [ '%s qdisc add dev %s root handle 5:0 htb default 1',
+                          '%s class add dev %s parent 5:0 classid 5:1 htb ' +
                           'rate %fMbit burst 15k' % bw ]
-            parent = ' parent 1:1 '
+            parent = ' parent 5:1 '
 
             # ECN or RED
             if enable_ecn:
                 cmds += [ '%s qdisc add dev %s' + parent +
-                          'handle 10: red limit 1000000 ' +
+                          'handle 6: red limit 1000000 ' +
                           'min 30000 max 35000 avpkt 1500 ' +
                           'burst 20 ' +
                           'bandwidth %fmbit probability 1 ecn' % bw ]
-                parent = ' parent 10: '
+                parent = ' parent 6: '
             elif enable_red:
                 cmds += [ '%s qdisc add dev %s' + parent +
-                          'handle 10: red limit 1000000 ' +
+                          'handle 6: red limit 1000000 ' +
                           'min 30000 max 35000 avpkt 1500 ' +
                           'burst 20 ' +
                           'bandwidth %fmbit probability 1' % bw ]
-                parent = ' parent 10: '
+                parent = ' parent 6: '
         return cmds, parent
 
     @staticmethod
     def delayCmds( parent, delay=None, jitter=None,
                    loss=None, max_queue_size=None ):
         "Internal method: return tc commands for delay and loss"
-
         cmds = []
         if delay and delay < 0:
             error( 'Negative delay', delay, '\n' )
@@ -246,14 +294,15 @@ class TCIntf( Intf ):
             netemargs = '%s%s%s%s' % (
                 'delay %s ' % delay if delay is not None else '',
                 '%s ' % jitter if jitter is not None else '',
-                'loss %d ' % loss if loss is not None else '',
+                'loss %.5f ' % loss if loss is not None else '',
                 'limit %d' % max_queue_size if max_queue_size is not None
                 else '' )
             if netemargs:
                 cmds = [ '%s qdisc add dev %s ' + parent +
                          ' handle 10: netem ' +
                          netemargs ]
-        return cmds
+                parent = ' parent 10:1 '
+        return cmds, parent
 
     def tc( self, cmd, tc='tc' ):
         "Execute tc command for our interface"
@@ -280,7 +329,11 @@ class TCIntf( Intf ):
             return
 
         # Clear existing configuration
-        cmds = [ '%s qdisc del dev %s root' ]
+        tcoutput = self.tc( '%s qdisc show dev %s' )
+        if "priomap" not in tcoutput:
+            cmds = [ '%s qdisc del dev %s root' ]
+        else:
+            cmds = []
 
         # Bandwidth limits via various methods
         bwcmds, parent = self.bwCmds( bw=bw, speedup=speedup,
@@ -291,15 +344,17 @@ class TCIntf( Intf ):
         cmds += bwcmds
 
         # Delay/jitter/loss/max_queue_size using netem
-        cmds += self.delayCmds( delay=delay, jitter=jitter, loss=loss,
-                                max_queue_size=max_queue_size,
-                                parent=parent )
+        delaycmds, parent = self.delayCmds( delay=delay, jitter=jitter,
+                                            loss=loss,
+                                            max_queue_size=max_queue_size,
+                                            parent=parent )
+        cmds += delaycmds
 
         # Ugly but functional: display configuration info
         stuff = ( ( [ '%.2fMbit' % bw ] if bw is not None else [] ) +
                   ( [ '%s delay' % delay ] if delay is not None else [] ) +
                   ( [ '%s jitter' % jitter ] if jitter is not None else [] ) +
-                  ( ['%d%% loss' % loss ] if loss is not None else [] ) +
+                  ( ['%.5f%% loss' % loss ] if loss is not None else [] ) +
                   ( [ 'ECN' ] if enable_ecn else [ 'RED' ]
                     if enable_red else [] ) )
         info( '(' + ' '.join( stuff ) + ') ' )
@@ -307,9 +362,13 @@ class TCIntf( Intf ):
         # Execute all the commands in our node
         debug("at map stage w/cmds: %s\n" % cmds)
         tcoutputs = [ self.tc(cmd) for cmd in cmds ]
+        for output in tcoutputs:
+            if output != '':
+                error( "*** Error: %s" % output )
         debug( "cmds:", cmds, '\n' )
         debug( "outputs:", tcoutputs, '\n' )
         result[ 'tcoutputs'] = tcoutputs
+        result[ 'parent' ] = parent
 
         return result
 
@@ -319,10 +378,11 @@ class Link( object ):
     """A basic link is just a veth pair.
        Other types of links could be tunnels, link emulators, etc.."""
 
+    # pylint: disable=too-many-branches
     def __init__( self, node1, node2, port1=None, port2=None,
-                  intfName1=None, intfName2=None,
+                  intfName1=None, intfName2=None, addr1=None, addr2=None,
                   intf=Intf, cls1=None, cls2=None, params1=None,
-                  params2=None ):
+                  params2=None, fast=True ):
         """Create veth link to another node, making two new interfaces.
            node1: first node
            node2: second node
@@ -335,65 +395,141 @@ class Link( object ):
            params1: parameters for interface 1
            params2: parameters for interface 2"""
         # This is a bit awkward; it seems that having everything in
-        # params would be more orthogonal, but being able to specify
-        # in-line arguments is more convenient!
-        if port1 is None:
-            port1 = node1.newPort()
-        if port2 is None:
-            port2 = node2.newPort()
+        # params is more orthogonal, but being able to specify
+        # in-line arguments is more convenient! So we support both.
+        if params1 is None:
+            params1 = {}
+        if params2 is None:
+            params2 = {}
+        # Allow passing in params1=params2
+        if params2 is params1:
+            params2 = dict( params1 )
+        if port1 is not None:
+            params1[ 'port' ] = port1
+        if port2 is not None:
+            params2[ 'port' ] = port2
+        if 'port' not in params1:
+            params1[ 'port' ] = node1.newPort()
+        if 'port' not in params2:
+            params2[ 'port' ] = node2.newPort()
         if not intfName1:
-            intfName1 = self.intfName( node1, port1 )
+            intfName1 = self.intfName( node1, params1[ 'port' ] )
         if not intfName2:
-            intfName2 = self.intfName( node2, port2 )
+            intfName2 = self.intfName( node2, params2[ 'port' ] )
 
-        self.makeIntfPair( intfName1, intfName2 )
+        self.fast = fast
+        if fast:
+            params1.setdefault( 'moveIntfFn', self._ignore )
+            params2.setdefault( 'moveIntfFn', self._ignore )
+            self.makeIntfPair( intfName1, intfName2, addr1, addr2,
+                               node1, node2, deleteIntfs=False )
+        else:
+            self.makeIntfPair( intfName1, intfName2, addr1, addr2 )
 
         if not cls1:
             cls1 = intf
         if not cls2:
             cls2 = intf
-        if not params1:
-            params1 = {}
-        if not params2:
-            params2 = {}
-
-        intf1 = cls1( name=intfName1, node=node1, port=port1,
-                      link=self, **params1  )
-        intf2 = cls2( name=intfName2, node=node2, port=port2,
-                      link=self, **params2 )
+	
+        intf1 = cls1( name=intfName1, node=node1,
+                      link=self, mac=addr1, **params1  )
+        intf2 = cls2( name=intfName2, node=node2,
+                      link=self, mac=addr2, **params2 )
 
         # All we are is dust in the wind, and our two interfaces
         self.intf1, self.intf2 = intf1, intf2
+    # pylint: enable=too-many-branches
 
-    @classmethod
-    def intfName( cls, node, n ):
+    @staticmethod
+    def _ignore( *args, **kwargs ):
+        "Ignore any arguments"
+        pass
+
+    def intfName( self, node, n ):
         "Construct a canonical interface name node-ethN for interface n."
+        # Leave this as an instance method for now
+        assert self
         return node.name + '-eth' + repr( n )
 
     @classmethod
-    def makeIntfPair( cls, intf1, intf2 ):
+    def makeIntfPair( cls, intfname1, intfname2, addr1=None, addr2=None,
+                      node1=None, node2=None, deleteIntfs=True ):
         """Create pair of interfaces
-           intf1: name of interface 1
-           intf2: name of interface 2
-           (override this class method [and possibly delete()]
+           intfname1: name for interface 1
+           intfname2: name for interface 2
+           addr1: MAC address for interface 1 (optional)
+           addr2: MAC address for interface 2 (optional)
+           node1: home node for interface 1 (optional)
+           node2: home node for interface 2 (optional)
+           (override this method [and possibly delete()]
            to change link type)"""
-        makeIntfPair( intf1, intf2  )
+        # Leave this as a class method for now
+        assert cls
+        return makeIntfPair( intfname1, intfname2, addr1, addr2, node1, node2,
+                             deleteIntfs=deleteIntfs )
 
     def delete( self ):
         "Delete this link"
         self.intf1.delete()
-        self.intf2.delete()
+        # We only need to delete one side, though this doesn't seem to
+        # cost us much and might help subclasses.
+        # self.intf2.delete()
+
+    def stop( self ):
+        "Override to stop and clean up link as needed"
+        self.delete()
+
+    def status( self ):
+        "Return link status as a string"
+        return "(%s %s)" % ( self.intf1.status(), self.intf2.status() )
 
     def __str__( self ):
         return '%s<->%s' % ( self.intf1, self.intf2 )
 
+
+class OVSIntf( Intf ):
+    "Patch interface on an OVSSwitch"
+
+    def ifconfig( self, *args ):
+        cmd = ' '.join( args )
+        if cmd == 'up':
+            # OVSIntf is always up
+            return
+        else:
+            raise Exception( 'OVSIntf cannot do ifconfig ' + cmd )
+
+
+class OVSLink( Link ):
+    """Link that makes patch links between OVSSwitches
+       Warning: in testing we have found that no more
+       than ~64 OVS patch links should be used in row."""
+
+    def __init__( self, node1, node2, **kwargs ):
+        "See Link.__init__() for options"
+        self.isPatchLink = False
+        if ( isinstance( node1, mininet.node.OVSSwitch ) and
+             isinstance( node2, mininet.node.OVSSwitch ) ):
+            self.isPatchLink = True
+            kwargs.update( cls1=OVSIntf, cls2=OVSIntf )
+        Link.__init__( self, node1, node2, **kwargs )
+
+    def makeIntfPair( self, *args, **kwargs ):
+        "Usually delegated to OVSSwitch"
+        if self.isPatchLink:
+            return None, None
+        else:
+            return Link.makeIntfPair( *args, **kwargs )
+
+
 class TCLink( Link ):
     "Link with symmetric TC interfaces configured via opts"
     def __init__( self, node1, node2, port1=None, port2=None,
-                  intfName1=None, intfName2=None, **params ):
+                  intfName1=None, intfName2=None,
+                  addr1=None, addr2=None, **params ):
         Link.__init__( self, node1, node2, port1=port1, port2=port2,
                        intfName1=intfName1, intfName2=intfName2,
                        cls1=TCIntf,
                        cls2=TCIntf,
+                       addr1=addr1, addr2=addr2,
                        params1=params,
-                       params2=params)
+                       params2=params )

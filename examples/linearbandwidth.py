@@ -23,11 +23,15 @@ of switches, this example demonstrates:
 
 """
 
+from __future__ import print_function
+
 from mininet.net import Mininet
-from mininet.node import UserSwitch, OVSKernelSwitch
+from mininet.node import UserSwitch, OVSKernelSwitch, Controller
 from mininet.topo import Topo
 from mininet.log import lg
-from mininet.util import irange
+from mininet.util import irange, quietRun
+from mininet.link import TCLink
+from functools import partial
 
 import sys
 flush = sys.stdout.flush
@@ -70,41 +74,55 @@ def linearBandwidthTest( lengths ):
     switches = { 'reference user': UserSwitch,
                  'Open vSwitch kernel': OVSKernelSwitch }
 
+    # UserSwitch is horribly slow with recent kernels.
+    # We can reinstate it once its performance is fixed
+    del switches[ 'reference user' ]
+
     topo = LinearTestTopo( hostCount )
 
+    # Select TCP Reno
+    output = quietRun( 'sysctl -w net.ipv4.tcp_congestion_control=reno' )
+    assert 'reno' in output
+
     for datapath in switches.keys():
-        print "*** testing", datapath, "datapath"
+        print( "*** testing", datapath, "datapath" )
         Switch = switches[ datapath ]
         results[ datapath ] = []
-        net = Mininet( topo=topo, switch=Switch )
+        link = partial( TCLink, delay='1ms' )
+        net = Mininet( topo=topo, switch=Switch,
+                       controller=Controller, waitConnected=True,
+                       link=link )
         net.start()
-        print "*** testing basic connectivity"
+        print( "*** testing basic connectivity" )
         for n in lengths:
             net.ping( [ net.hosts[ 0 ], net.hosts[ n ] ] )
-        print "*** testing bandwidth"
+        print( "*** testing bandwidth" )
         for n in lengths:
             src, dst = net.hosts[ 0 ], net.hosts[ n ]
-            print "testing", src.name, "<->", dst.name,
-            bandwidth = net.iperf( [ src, dst ] )
-            print bandwidth
+            # Try to prime the pump to reduce PACKET_INs during test
+            # since the reference controller is reactive
+            src.cmd( 'telnet', dst.IP(), '5001' )
+            print( "testing", src.name, "<->", dst.name )
+            bandwidth = net.iperf( [ src, dst ], seconds=10 )
+            print( bandwidth )
             flush()
             results[ datapath ] += [ ( n, bandwidth ) ]
         net.stop()
 
     for datapath in switches.keys():
-        print
-        print "*** Linear network results for", datapath, "datapath:"
-        print
+        print()
+        print( "*** Linear network results for", datapath, "datapath:" )
+        print()
         result = results[ datapath ]
-        print "SwitchCount\tiperf Results"
+        print( "SwitchCount\tiperf Results" )
         for switchCount, bandwidth in result:
-            print switchCount, '\t\t',
-            print bandwidth[ 0 ], 'server, ', bandwidth[ 1 ], 'client'
-        print
-    print
+            print( switchCount, '\t\t' )
+            print( bandwidth[ 0 ], 'server, ', bandwidth[ 1 ], 'client' )
+        print()
+    print()
 
 if __name__ == '__main__':
     lg.setLogLevel( 'info' )
-    sizes = [ 1, 10, 20, 40, 60, 80, 100 ]
-    print "*** Running linearBandwidthTest", sizes
+    sizes = [ 1, 10, 20, 40, 60, 80 ]
+    print( "*** Running linearBandwidthTest", sizes )
     linearBandwidthTest( sizes  )
