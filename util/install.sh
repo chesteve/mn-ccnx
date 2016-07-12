@@ -155,32 +155,16 @@ function install_ccnx () {
 
 function install_influxDB () {
     echo "Install InfluxDB for data collection."
-    INFLUX_DIR=./influxDB
-
-    if [ "$ARCH" = "x86_64" -o "$ARCH" = "amd64" ]; then
-	    if [ ! -d "$INFLUX_DIR" ]; then
-                sudo mkdir ./influxDB
-	    else
-	        echo "InfluxDB directory: $INFLUX_DIR already exists. Aborting."
-                exit 1
-          	fi
-
-	    pushd "$INFLUX_DIR"
-	    wget https://dl.influxdata.com/influxdb/releases/influxdb_0.13.0_amd64.deb
-	    sudo dpkg -i influxdb_0.13.0_amd64.deb 
-	    sudo wget https://bootstrap.pypa.io/get-pip.py 
-	    sudo python get-pip.py
-	    sudo pip install influxdb
-	    sudo pip install --upgrade influxdb
-	    popd
-
-    else
-	    echo "Architecture $ARCH not yet supported by the latest version of InfluxDB"
-	    exit 1
-    fi
+    
+    curl -sL https://repos.influxdata.com/influxdb.key | sudo apt-key add -
+    source /etc/lsb-release
+    echo "deb https://repos.influxdata.com/${DISTRIB_ID,,} ${DISTRIB_CODENAME} stable" | sudo tee /etc/apt/sources.list.d/influxdb.list
+    sudo apt-get update && sudo apt-get install influxdb python-pip
+    sudo pip install influxdb
+    sudo pip install --upgrade influxdb
 
     echo "InfluxDB installed successfully. Starting daemon..."
-    sudo /etc/init.d/influxdb restart
+    sudo service influxdb restart
 }
 
 function kernel {
@@ -206,6 +190,7 @@ function kernel_clean {
 
 # Install Mini deps
 function mn_deps {
+    set -x
     install_ccnx
     install_influxDB
     install_ccnping 
@@ -844,6 +829,7 @@ if [ $# -eq 0 ]
 then
     all
 else
+    set -x
     while getopts 'abcdefhikmnprs:tvV:wxy03' OPTION
     do
       case $OPTION in
