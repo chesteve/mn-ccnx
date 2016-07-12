@@ -112,32 +112,47 @@ function install_ccnping () {
 function install_ccnx () {
     echo "Install CCNx suite if necessary"
     CCNX_DIR=./ccnx
-    CCNX_LOC=`which ccndstatus`
-    prompt=;
-    if [ "$CCNX_LOC" = "" ]; then
+    PROMPT=;
+    ASD="Ubuntu"
+    DAS="15.11"
+
+    if ! type ccndstatus >/dev/null; then
 	    echo "CCNx was not detected in the current system."
-	    while [ -z $prompt ];
-	        do read -p "Do you wish to install it now? [y/n]?" choice;
-      	    case "$choice" in
-        		y|Y ) prompt=true; break;;
-        		n|N ) prompt=false;break;;
+	    while [ -z $PROMPT ];
+	        do read -p "Do you wish to install it now? [y/n]?" CHOICE;
+      	    case "$CHOICE" in
+        		y|Y ) PROMPT=true; break;;
+        		n|N ) PROMPT=false;break;;
       	    esac;
 	    done;
     else
 	    echo "CCNx already installed in the current system!"
     fi
 
-    if [ "$prompt" ]; then
+    if [ "$PROMPT" = true ]; then
             if [ ! -d "$CCNX_DIR" ]; then
 		    sudo mkdir "$CCNX_DIR"
 	    else
 		    echo "Directory $CCNX_DIR already exists. Aborting."
 		    exit 1
 	    fi
-	    sudo apt-get update
-	    $install libssl-dev libexpat1-dev libpcap-dev libxml2-utils \
-		    vlc wireshark openjdk-7-jdk ant git-core gcc \
-		    athena-jot python-dev make wget
+	    
+        if [ $(expr ${RELEASE} \>= ${DAS}) -eq 1 ]; then
+            sudo touch /etc/apt/sources.list2
+            sudo sed 's/\< restricted\>//'g /etc/apt/sources.list > /etc/apt/sources.list2
+            sudo rm /etc/apt/sources.list
+            sudo mv /etc/apt/sources.list2 /etc/apt/sources.list
+            sudo add-apt-repository ppa:openjdk-r/ppa 
+            sudo apt-get update
+	        $install libssl-dev libexpat1-dev libpcap-dev libxml2-utils \
+		    vlc wireshark ant git-core gcc python-software-properties\
+		    athena-jot python-dev make wget openjdk-7-jdk 
+        else
+	        sudo apt-get update
+	        $install libssl-dev libexpat1-dev libpcap-dev libxml2-utils \
+		        vlc wireshark openjdk-7-jdk ant git-core gcc \
+		        athena-jot python-dev make wget
+        fi
 	    pushd "$CCNX_DIR"
 	    sudo wget http://www.ccnx.org/releases/ccnx-0.8.2.tar.gz
 	    sudo tar -xvzf ccnx-0.8.2.tar.gz
@@ -190,7 +205,7 @@ function kernel_clean {
 
 # Install Mini deps
 function mn_deps {
-    set -x
+    #set -x
     install_ccnx
     install_influxDB
     install_ccnping 
